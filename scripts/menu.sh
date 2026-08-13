@@ -44,7 +44,9 @@ MENU_ITEMS=(
     "View logs|do_logs"
     "Create encrypted backup|do_backup"
     "Restore from backup|do_restore"
-    "Edit settings.json|do_edit_settings"
+    "Open full configuration panel|do_settings"
+    "Configure Discord webhook|do_discord"
+    "Configure Cloudflare Tunnel|do_tunnel"
     "Run security test|do_sec_test"
 )
 
@@ -97,34 +99,12 @@ do_restore() {
     restore "$file"
 }
 
-do_edit_settings() {
-    local settings_file="$APP_DIR/settings.json"
-    if [ ! -f "$settings_file" ]; then
-        if [ -f "$APP_DIR/settings.example.json" ]; then
-            cp "$APP_DIR/settings.example.json" "$settings_file"
-            echo "Created $settings_file from the example."
-        else
-            echo "Error: neither settings.json nor settings.example.json exists."
-            return 1
-        fi
-    fi
-
-    local editor="${EDITOR:-}"
-    if [ -z "$editor" ]; then
-        for ed in nano vim vi; do
-            if command -v "$ed" >/dev/null 2>&1; then
-                editor="$ed"
-                break
-            fi
-        done
-    fi
-    if [ -z "$editor" ]; then
-        echo "No editor found — set \$EDITOR or install nano/vim."
-        echo "You can edit it manually at: $settings_file"
-        return 1
-    fi
-    "$editor" "$settings_file"
+do_settings() {
+    python3 "$SCRIPT_DIR/settings_cli.py"
 }
+
+do_discord() { configure_discord; }
+do_tunnel() { configure_tunnel; }
 
 do_sec_test() {
     bash "$SCRIPT_DIR/test_security.sh"
@@ -139,8 +119,10 @@ dispatch() {
         5) do_logs ;;
         6) do_backup ;;
         7) do_restore ;;
-        8) do_edit_settings ;;
-        9) do_sec_test ;;
+        8) do_settings ;;
+        9) do_discord ;;
+        10) do_tunnel ;;
+        11) do_sec_test ;;
         *) return 1 ;;
     esac
 }

@@ -1,39 +1,12 @@
 {
-  "site": {
-    "name": "Media Gallery",
-    "tagline": "A private, self-hosted image gallery",
-    "description": "Your own fast, private gallery — upload, moderate, and share images on your own terms.",
-    "emoji": "🖼️",
-    "theme_color": "#7c3aed",
-    "accent_color": "#a78bfa",
-    "footer_text": "Self-hosted with ❤️ · Powered by Media Gallery"
-  },
-
-  "uploads": {
-    "enabled": true,
-    "max_file_mb": 20,
-    "rate_limit_count": 10,
-    "rate_limit_window_seconds": 600
-  },
-
-  "gallery": {
-    "page_size": 60,
-    "allow_reports": true
-  },
-
-  "moderation": {
-    "auto_approve_threshold": 0.2,
-    "auto_reject_threshold": 0.8,
-    "blur_quarantine_thumbnails": true
-  },
-
-  "admin": {
-    "session_hours": 24
-  },
-
-  "security": {
-    "cookie_secure": false,
-    "trust_proxy_headers": true,
-    "frame_deny": true
-  }
+  "site":{"name":"Media Gallery","tagline":"Fast, self-hosted media sharing","description":"A lightweight self-hosted gallery for images, audio and video.","emoji":"🖼️","theme_color":"#7c3aed","accent_color":"#a78bfa","footer_text":"Self-hosted · Powered by Media Gallery"},
+  "server":{"port":8000,"storage_directory":"uploads","public_path":"public","quarantine_path":"quarantine","staging_path":"staging"},
+  "uploads":{"enabled":true,"max_file_mb":50,"rate_limit_count":10,"rate_limit_window_seconds":600,"allowed_media":"image,audio,video"},
+  "gallery":{"page_size":40,"allow_reports":true,"allow_voting":true,"allow_search":true,"allow_tags":true,"default_sort":"new","max_description":1000,"max_tags":8},
+  "moderation":{"enabled":true,"fail_closed":true,"auto_approve_threshold":0.2,"auto_reject_threshold":0.8,"blur_quarantine_thumbnails":true},
+  "admin":{"session_hours":24},"accounts":{"enabled":true,"signup_enabled":true,"allow_anonymous_posts":true},
+  "turnstile":{"enabled":false,"site_key":"","protect_signup":true,"protect_upload":false,"protect_voting":true},
+  "discord":{"enabled":false,"notify_new_photos":true},
+  "security":{"cookie_secure":false,"trust_proxy_headers":true,"hsts_enabled":true,"frame_deny":true,"hide_server_identity":true,"disable_access_logs":true,"max_request_mb":55},
+  "runtime":{"use_proot":false,"power_mode":"balanced","auto_recover":true}
 }

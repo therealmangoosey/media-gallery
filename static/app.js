@@ -1,0 +1,1 @@
+document.addEventListener('change',e=>{if(e.target.matches('input[type=file]')){const f=e.target.files[0];if(f){const p=e.target.closest('form')?.querySelector('.hint');if(p)p.textContent=`Selected: ${f.name} (${(f.size/1048576).toFixed(1)} MB)`;}}});
