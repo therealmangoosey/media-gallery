@@ -7,7 +7,23 @@ pkg_retry(){ local n=1; while [ "$n" -le 3 ]; do echo "Installing packages (atte
 if command -v pkg >/dev/null 2>&1; then pkg update || true; pkg upgrade -y || true; pkg_retry python git curl coreutils gnupg || exit 1; fi
 NATIVE_OK=true
 python3 -m venv .venv 2>/dev/null || NATIVE_OK=false
-if [ "$NATIVE_OK" = true ]; then . .venv/bin/activate; pip install --upgrade pip || NATIVE_OK=false; [ "$NATIVE_OK" = true ] && pip install -r requirements.txt || NATIVE_OK=false; fi
+if [ "$NATIVE_OK" = true ]; then
+  . .venv/bin/activate
+  pip install --upgrade pip || NATIVE_OK=false
+  if [ "$NATIVE_OK" = true ]; then
+    # Prefer the Termux-built watcher if present; never require compiling watchfiles.
+    if command -v pkg >/dev/null 2>&1; then
+      pkg install -y python-watchfiles 2>/dev/null || true
+    fi
+    if ! pip install -r requirements.txt; then
+      echo "pip install failed. Retrying without compiling native extras (watchfiles/uvloop)..."
+      pip install --only-binary=:all: -r requirements.txt || NATIVE_OK=false
+    fi
+  fi
+fi
+if [ "$NATIVE_OK" = false ]; then
+  echo "Native Python packages are incomplete; a Debian/proot fallback will be offered after the admin password."
+fi
 read -r -s -p "Admin password (10+ characters): " ADMIN_PASS; echo
 read -r -s -p "Confirm admin password: " ADMIN_CONFIRM; echo
 if [ "${#ADMIN_PASS}" -lt 10 ] || [ "$ADMIN_PASS" != "$ADMIN_CONFIRM" ]; then echo "Admin passwords must match and be at least 10 characters."; exit 1; fi

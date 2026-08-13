@@ -1,7 +1,13 @@
 # Pinned dependency versions (audit-remediation).
 # Update with `pip install -U -r requirements.txt` and re-run `pip-audit`.
+#
+# Use uvicorn without the [standard] extra. That extra pulls watchfiles
+# (Rust/maturin/pyo3), which fails on Termux/Android with:
+#   Unsupported Android architecture: armv8l
+# Production start scripts do not use --reload, so watchfiles is unused.
+# uvloop (also in [standard]) is likewise unavailable on Android.
 fastapi==0.141.1
-uvicorn[standard]==0.52.3
+uvicorn==0.52.3
 sqlalchemy==2.0.52
 pillow==12.3.0
 argon2-cffi==25.1.0

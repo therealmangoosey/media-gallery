@@ -11,6 +11,7 @@
 - [Media support](#media-support)
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Updating](#updating)
 - [First launch](#first-launch)
 - [Console control panel](#console-control-panel)
 - [Power modes](#power-modes)
@@ -133,6 +134,41 @@ bash scripts/menu.sh
 
 The first screen is the **interactive CLI control panel**. This is the numbered menu you were thinking of.
 
+## Updating
+
+Do **not** delete the folder and re-download, and do **not** run `install.sh` again. The installer asks for a new admin password and is only for first setup.
+
+From the gallery directory:
+
+```bash
+cd ~/media-gallery
+bash scripts/update.sh
+```
+
+Or from the control panel: **Update application (keeps media & accounts)**.
+
+That command only refreshes application code (and Python packages listed in `requirements.txt`). It **does not** delete or overwrite:
+
+| Kept as-is | Why |
+|---|---|
+| `uploads/` (public, quarantine, staging) | All user media |
+| `gallery.db` | Accounts, posts, votes, tags |
+| `settings.json` | Site/console configuration |
+| `.env` | Webhook, Turnstile, tunnel secrets |
+| `.admin_pass_hash` / `.secret_key` | Admin login and session signing |
+| `.venv/` | Existing Python environment |
+| `logs/`, `models/`, `bin/` | Local logs, optional model, cloudflared |
+
+It never runs `git clean`, never wipes ignored files, and never resets the admin password.
+
+If you installed from a zip instead of git:
+
+```bash
+bash scripts/update.sh --from-zip /path/to/media-gallery.zip
+```
+
+The zip is overlaid on top of the existing tree with the same data folders excluded. Restart the gallery after a successful update.
+
 ## First launch
 
 From the control panel choose:
@@ -169,6 +205,7 @@ The menu provides:
 | Discord | Configure webhook |
 | Cloudflare Tunnel | Configure tunnel token |
 | Security test | Run local security checks |
+| Update | Refresh app code without touching media or accounts |
 
 ## Power modes
 
