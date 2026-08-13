@@ -35,25 +35,40 @@ The installer will:
 *   Prompt for your **Tunnel Token** and **Admin Password**.
 *   **Verify** that the server is locked down to `127.0.0.1`.
 
-## 3. Running the Gallery
+> **Troubleshooting — mirror errors:** If you see `File has unexpected size` or a
+> checksum mismatch while packages install, the Termux mirror is still syncing
+> (not a problem on your end). The installer retries automatically. If it still
+> fails, switch mirrors with `termux-change-repo`, pick a different one, then
+> run `bash install.sh` again.
+
+## 3. Configuration
+After installation, customize the gallery by editing **`settings.json`** in the
+repo root (it is created for you; `settings.example.json` documents every
+option). Set your site name, tagline, description, colors, upload limits, and
+moderation thresholds, then restart the app. See the **Configuration** table in
+`README.md` for the full list.
+
+## 4. Running the Gallery
+*   **Menu (recommended)**: `bash scripts/menu.sh` — an interactive menu with a banner and numbered options for starting, stopping, backing up, editing settings, and more.
 *   **Start**: `bash scripts/manage.sh start`
 *   **Stop**: `bash scripts/manage.sh stop`
 *   **Status**: `bash scripts/manage.sh status`
+*   **Logs**: `bash scripts/manage.sh logs`
 
-## 4. Privacy Verification
+## 5. Privacy Verification
 Once started, run:
 ```bash
 bash scripts/test_security.sh
 ```
 If it says **[PASS]**, your phone's IP address is not being leaked. Visitors only see Cloudflare's IP.
 
-## 5. Adding the Moderation Model
+## 6. Adding the Moderation Model
 The gallery "fails closed" (quarantines everything) until a model is provided.
 1.  Download a `nsfw_mobile_model.tflite`.
 2.  Place it in `media-gallery/models/nsfw_model.tflite`.
 3.  Restart the app.
 
-## 6. Security Maintenance
+## 7. Security Maintenance
 *   **Backups**: Run `bash scripts/manage.sh backup`. It will ask for a password and create a GPG-encrypted file.
 *   **Updates**: Use `git pull` and rerun `install.sh`.
 *   **Emergency**: If you see abuse, use the **Emergency Stop** button in the Admin Dashboard to freeze all uploads.

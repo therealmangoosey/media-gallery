@@ -1,0 +1,39 @@
+{
+  "site": {
+    "name": "Media Gallery",
+    "tagline": "A private, self-hosted image gallery",
+    "description": "Your own fast, private gallery — upload, moderate, and share images on your own terms.",
+    "emoji": "🖼️",
+    "theme_color": "#7c3aed",
+    "accent_color": "#a78bfa",
+    "footer_text": "Self-hosted with ❤️ · Powered by Media Gallery"
+  },
+
+  "uploads": {
+    "enabled": true,
+    "max_file_mb": 20,
+    "rate_limit_count": 10,
+    "rate_limit_window_seconds": 600
+  },
+
+  "gallery": {
+    "page_size": 60,
+    "allow_reports": true
+  },
+
+  "moderation": {
+    "auto_approve_threshold": 0.2,
+    "auto_reject_threshold": 0.8,
+    "blur_quarantine_thumbnails": true
+  },
+
+  "admin": {
+    "session_hours": 24
+  },
+
+  "security": {
+    "cookie_secure": false,
+    "trust_proxy_headers": true,
+    "frame_deny": true
+  }
+}
