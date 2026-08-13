@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# App Specific
+gallery.db
+.admin_pass_hash
+.env
+uploads/staging/*
+uploads/public/*
+uploads/quarantine/*
+logs/*
+bin/cloudflared
+models/nsfw_model.tflite
+app.pid
+tunnel.pid
+
+# OS
+.DS_Store
