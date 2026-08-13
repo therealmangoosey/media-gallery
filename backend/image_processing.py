@@ -1,73 +1,37 @@
-"""Image validation and (re-)encoding.
-
-Every upload is re-encoded to WebP. This strips EXIF/GPS metadata, auto-orients
-photos, normalizes the pixel format, and produces a compact file plus a small
-thumbnail so the gallery loads quickly.
-"""
-
 import io
-
-from PIL import Image as PILImage
-from PIL import ImageOps
-
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-ALLOWED_FORMATS = {"jpeg", "png", "webp"}
-
-# Reject anything above these limits before decoding further. This prevents
-# decompression-bomb / memory-exhaustion attacks via a hostile image.
-MAX_DIMENSION = 12000
-MAX_PIXELS = 40_000_000  # 40 MP
-
-# Enforce Pillow's own guard at the same limit as a second line of defense
-# (in case a crafted header lies about dimensions until decode time).
-PILImage.MAX_IMAGE_PIXELS = MAX_PIXELS
-
-THUMBNAIL_MAX = 480
-QUALITY = 82
-
-
-def validate_image(file_content: bytes):
-    """Return (ok, format_name_or_error)."""
-    try:
-        img = PILImage.open(io.BytesIO(file_content))
-        fmt = (img.format or "").lower()
-        if fmt not in ALLOWED_FORMATS:
-            return False, "Unsupported format"
-
-        width, height = img.size
-        if width > MAX_DIMENSION or height > MAX_DIMENSION:
-            return False, f"Image too large ({width}x{height})"
-        if width * height > MAX_PIXELS:
-            return False, "Image has too many pixels"
-
-        # Verify the whole image actually decodes (catches truncated/corrupt
-        # files that only look valid in the header).
-        img.verify()
-        return True, fmt
-    except Exception as exc:  # noqa: BLE001 - any decode error is a reject
-        return False, f"Invalid image data: {exc}"
-
-
-def _reencode(img: PILImage.Image, target_path: str, max_side: int | None = None):
-    img = ImageOps.exif_transpose(img)
-
-    # Flatten exotic modes (P, LA, CMYK, I, F...) to RGB/RGBA.
-    if img.mode not in ("RGB", "RGBA"):
-        has_alpha = img.mode in ("LA", "PA") or (
-            img.mode == "P" and "transparency" in img.info
-        )
-        img = img.convert("RGBA" if has_alpha else "RGB")
-
-    if max_side:
-        img.thumbnail((max_side, max_side), PILImage.LANCZOS)
-
-    img.save(target_path, "WEBP", quality=QUALITY, method=6)
-
-
-def process_and_save(file_content: bytes, main_path: str, thumb_path: str | None = None):
-    """Re-encode to WebP, writing the full image and (optionally) a thumbnail."""
-    img = PILImage.open(io.BytesIO(file_content))
-    _reencode(img, main_path)
-    if thumb_path:
-        _reencode(img.copy(), thumb_path, max_side=THUMBNAIL_MAX)
-    return True
+from PIL import Image as PILImage,ImageOps
+ALLOWED_IMAGE={'jpeg':'image/jpeg','png':'image/png','webp':'image/webp'}
+MAX_DIMENSION=12000; MAX_PIXELS=40_000_000; THUMBNAIL_MAX=480; QUALITY=82
+PILImage.MAX_IMAGE_PIXELS=MAX_PIXELS
+def validate_image(data):
+ try:
+  im=PILImage.open(io.BytesIO(data)); fmt=(im.format or '').lower()
+  if fmt not in ALLOWED_IMAGE:return False,'Unsupported image format'
+  w,h=im.size
+  if w>MAX_DIMENSION or h>MAX_DIMENSION or w*h>MAX_PIXELS:return False,'Image dimensions are too large'
+  im.verify(); return True,fmt
+ except Exception as e:return False,f'Invalid image data: {e}'
+def process_and_save(data,main_path,thumb_path=None):
+ im=PILImage.open(io.BytesIO(data)); im=ImageOps.exif_transpose(im)
+ if im.mode not in ('RGB','RGBA'): im=im.convert('RGBA' if 'A' in im.getbands() else 'RGB')
+ im.save(main_path,'WEBP',quality=QUALITY,method=4)
+ if thumb_path:
+  t=im.copy(); t.thumbnail((THUMBNAIL_MAX,THUMBNAIL_MAX),PILImage.Resampling.LANCZOS); t.save(thumb_path,'WEBP',quality=78,method=3)
+def detect_media(data,filename):
+ ext=filename.rsplit('.',1)[-1].lower() if '.' in filename else ''
+ if data.startswith(b'\xff\xd8\xff'):return 'image','image/jpeg','jpg'
+ if data.startswith(b'\x89PNG\r\n\x1a\n'):return 'image','image/png','png'
+ if data.startswith(b'RIFF') and data[8:12]==b'WEBP':return 'image','image/webp','webp'
+ if data.startswith(b'ID3') or (len(data)>2 and data[0]==0xff and (data[1]&0xe0)==0xe0):return 'audio','audio/mpeg',ext or 'mp3'
+ if data.startswith(b'RIFF') and data[8:12]==b'WAVE':return 'audio','audio/wav','wav'
+ if data.startswith(b'OggS'):return 'audio','audio/ogg','ogg'
+ if data.startswith(b'fLaC'):return 'audio','audio/flac','flac'
+ if len(data)>12 and data[4:8]==b'ftyp':
+  brand=data[8:12]
+  if brand in (b'M4A ',b'M4B '):return 'audio','audio/mp4','m4a'
+  return 'video','video/mp4','mp4'
+ if data.startswith(b'\x1aE\xdf\xa3'):return 'video','video/webm','webm'
+ if data.startswith(b'RIFF') and data[8:12]==b'AVI ':return 'video','video/x-msvideo','avi'
+ if ext in ('m4a','mp3','wav','ogg','flac'):return 'audio',{'m4a':'audio/mp4','mp3':'audio/mpeg','wav':'audio/wav','ogg':'audio/ogg','flac':'audio/flac'}[ext],ext
+ if ext in ('mp4','webm','mov','avi','mkv'):return 'video',{'mp4':'video/mp4','webm':'video/webm','mov':'video/quicktime','avi':'video/x-msvideo','mkv':'video/x-matroska'}[ext],ext
+ return None,None,None

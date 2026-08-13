@@ -1,7 +1,5 @@
 import os
 
-import numpy as np
-
 try:
     import tflite_runtime.interpreter as tflite
 except ImportError:
@@ -46,6 +44,10 @@ class ContentModerator:
             return 0.5, "Model not loaded"
 
         from PIL import Image as PILImage
+        try:
+            import numpy as np
+        except ImportError:
+            return 0.5, "NumPy not installed"
 
         img = PILImage.open(image_path).convert("RGB")
 
