@@ -154,10 +154,27 @@ fi
 if [ -f requirements.txt ]; then
     echo
     echo "Refreshing Python packages (this does not reset the admin password)..."
+    USE_PROOT="false"
+    if [ -f settings.json ] && command -v python3 >/dev/null 2>&1; then
+        USE_PROOT="$(python3 - settings.json <<'PY'
+import json,sys
+try:
+    print(json.load(open(sys.argv[1],encoding="utf-8")).get("runtime",{}).get("use_proot", False))
+except Exception:
+    print(False)
+PY
+)"
+    fi
     if [ -x .venv/bin/pip ]; then
         .venv/bin/pip install -r requirements.txt || echo "pip update had errors; existing venv and data were left in place."
-    elif [ -f /opt/venv/bin/pip ]; then
-        /opt/venv/bin/pip install -r requirements.txt || echo "pip update had errors; existing venv and data were left in place."
+    elif [ "$USE_PROOT" = "True" ] && command -v proot-distro >/dev/null 2>&1; then
+        # /opt/venv only exists inside the Debian proot container, never in
+        # Termux itself, so refreshing it means logging back into Debian.
+        PROOT_DIR="/root/$(basename "$APP_DIR")"
+        proot-distro login debian --bind "$APP_DIR:$PROOT_DIR" -- env REPO_DIR="$PROOT_DIR" bash -c '
+            [ -f /opt/venv/bin/pip ] || { echo "Python environment missing inside Debian; rerun install.sh" >&2; exit 1; }
+            /opt/venv/bin/pip install -r "$REPO_DIR/requirements.txt"
+        ' || echo "pip update had errors inside Debian; existing venv and data were left in place."
     else
         echo "No virtualenv found; skipped package refresh."
     fi
