@@ -126,96 +126,6 @@ configure_tunnel() {
     echo "Tunnel configuration saved. Restart the gallery to apply it."
 }
 
-start() {
-    STORAGE_DIR="$(read_setting server.storage_directory uploads)"
-    PUBLIC_SUBDIR="$(read_setting server.public_path public)"
-    QUARANTINE_SUBDIR="$(read_setting server.quarantine_path quarantine)"
-    STAGING_SUBDIR="$(read_setting server.staging_path staging)"
-    for part in "$STORAGE_DIR" "$PUBLIC_SUBDIR" "$QUARANTINE_SUBDIR" "$STAGING_SUBDIR"; do
-        case "$part" in
-            ""|.|..|*/*|*..*) echo "Error: unsafe storage setting."; return 1 ;;
-        esac
-    done
-    mkdir -p "$APP_DIR/$STORAGE_DIR/$STAGING_SUBDIR" "$APP_DIR/$STORAGE_DIR/$PUBLIC_SUBDIR" "$APP_DIR/$STORAGE_DIR/$QUARANTINE_SUBDIR" "$APP_DIR/logs"
-    chmod 700 "$APP_DIR/$STORAGE_DIR" "$APP_DIR/$STORAGE_DIR/$STAGING_SUBDIR" "$APP_DIR/$STORAGE_DIR/$PUBLIC_SUBDIR" "$APP_DIR/$STORAGE_DIR/$QUARANTINE_SUBDIR" 2>/dev/null || true
-
-    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        echo "App is already running (PID: $(cat "$PID_FILE"))"
-        return
-    fi
-    rm -f "$PID_FILE"
-
-    if [ ! -f "$APP_DIR/.admin_pass_hash" ]; then
-        echo "Error: $APP_DIR/.admin_pass_hash not found. Run install.sh first."
-        return 1
-    fi
-
-    echo "Starting Gallery App..."
-    ADMIN_PASSWORD_HASH="$(cat "$APP_DIR/.admin_pass_hash")"
-    export ADMIN_PASSWORD_HASH
-
-    USE_PROOT="false"
-if [ -f "$APP_DIR/settings.json" ] && command -v python3 >/dev/null 2>&1; then
-    USE_PROOT="$(read_setting runtime.use_proot false)"
-fi
-if [ "$USE_PROOT" = "True" ] || [ "$USE_PROOT" = "true" ] || [ ! -x "$APP_DIR/.venv/bin/python" ]; then
-    if ! command -v proot-distro >/dev/null 2>&1; then
-        echo "Error: native Python environment is unavailable and proot-distro is not installed."
-        return 1
-    fi
-        # Start inside the Debian proot environment (Termux). proot-distro bind
-        # mounts the Termux home directory to the proot user's home, so the
-        # repo is reachable at $HOME/<app-name> inside Debian.
-        proot-distro login debian -- bash -c "
-            REPO_DIR=\"\$HOME/$APP_NAME\"
-            [ -d \"\$REPO_DIR\" ] || REPO_DIR=\"/root/$APP_NAME\"
-            [ -d \"\$REPO_DIR\" ] || { echo \"Gallery directory not visible inside Debian.\" >&2; exit 1; }
-            cd \"\$REPO_DIR\" || exit 1
-            [ -f /opt/venv/bin/activate ] || { echo \"Python environment missing; rerun install.sh\" >&2; exit 1; }
-            source /opt/venv/bin/activate
-            export ADMIN_PASSWORD_HASH=\"$ADMIN_PASSWORD_HASH\"
-            mkdir -p logs \"$STORAGE_DIR/$STAGING_SUBDIR\" \"$STORAGE_DIR/$PUBLIC_SUBDIR\" \"$STORAGE_DIR/$QUARANTINE_SUBDIR\"
-            nohup python3 -m uvicorn backend.main:app --host 127.0.0.1 --port $PORT --no-access-log --no-server-header --log-level warning >> logs/app.log 2>&1 &
-            echo \$! > app.pid
-        "
-    else
-        # Fallback for non-Termux machines (e.g. dev box): run directly.
-        cd "$APP_DIR" || exit 1
-        if [ -d "$APP_DIR/.venv" ]; then
-            # shellcheck disable=SC1091
-            . "$APP_DIR/.venv/bin/activate"
-        fi
-        nohup python3 -m uvicorn backend.main:app --host 127.0.0.1 --port $PORT --no-access-log --no-server-header --log-level warning >> "$LOG_FILE" 2>&1 &
-        echo $! > "$PID_FILE"
-    fi
-
-    # Wait briefly for the port to come up so the user gets real feedback.
-    local i
-    for i in $(seq 1 15); do
-        if is_port_open; then
-            break
-        fi
-        sleep 1
-    done
-
-    if is_port_open; then
-        echo "App is running locally. The local bind address is intentionally not displayed."
-    else
-        echo "App process started but port $PORT isn't responding yet — check logs/app.log."
-    fi
-
-    # Also start cloudflared if token is available
-    if [ -f "$APP_DIR/.env" ]; then
-        load_env_safe "$APP_DIR/.env"
-        if [ -n "${TUNNEL_TOKEN:-}" ] && [ -x "$APP_DIR/bin/cloudflared" ]; then
-            echo "Starting Cloudflare Tunnel..."
-            nohup "$APP_DIR/bin/cloudflared" tunnel --token "$TUNNEL_TOKEN" run > "$APP_DIR/logs/tunnel.log" 2>&1 &
-            echo $! > "$TUNNEL_PID_FILE"
-        fi
-    fi
-    echo "App and Tunnel started."
-}
-
 stop() {
     local stopped=0
 
@@ -314,7 +224,7 @@ logs() {
 # Hardened replacement start routine: retries a different local port, then a
 # different Python runtime, without ever printing the bind address.
 start() {
-    local storage public quarantine staging auto_recover use_proot candidate attempts=0 started=0
+    local storage public quarantine staging auto_recover use_proot candidate attempts=0 started=0 proot_dir
     storage="$(read_setting server.storage_directory uploads)"; public="$(read_setting server.public_path public)"; quarantine="$(read_setting server.quarantine_path quarantine)"; staging="$(read_setting server.staging_path staging)"
     for part in "$storage" "$public" "$quarantine" "$staging"; do case "$part" in ""|.|..|*/*|*..*) echo "Error: unsafe storage setting."; return 1;; esac; done
     mkdir -p "$APP_DIR/$storage/$public" "$APP_DIR/$storage/$quarantine" "$APP_DIR/$storage/$staging" "$APP_DIR/logs"
@@ -330,7 +240,21 @@ start() {
         echo "Starting gallery (attempt $attempts)..."
         if [ "$use_proot" = "true" ] || [ "$use_proot" = "True" ]; then
             if command -v proot-distro >/dev/null 2>&1; then
-                proot-distro login debian -- bash -c "cd \"\$HOME/$APP_NAME\" 2>/dev/null || cd \"/root/$APP_NAME\"; source /opt/venv/bin/activate 2>/dev/null || true; export ADMIN_PASSWORD_HASH=\"$ADMIN_PASSWORD_HASH\"; nohup python3 -m uvicorn backend.main:app --host 127.0.0.1 --port $PORT --no-access-log --no-server-header --log-level warning >> logs/app.log 2>&1 & echo \$! > app.pid" >/dev/null 2>&1 || true
+                # proot-distro does NOT put the Termux app directory at $HOME
+                # inside Debian (Debian's root user has its own $HOME=/root).
+                # Bind-mount it explicitly to a fixed, known path.
+                proot_dir="/root/$APP_NAME"
+                if ! proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$PORT" bash -c '
+                    cd "$REPO_DIR" || exit 1
+                    [ -f /opt/venv/bin/activate ] || { echo "Python environment missing inside Debian; rerun install.sh" >&2; exit 1; }
+                    source /opt/venv/bin/activate
+                    nohup python3 -m uvicorn backend.main:app --host 127.0.0.1 --port "$PORT" --no-access-log --no-server-header --log-level warning >> logs/app.log 2>&1 &
+                    echo $! > app.pid
+                '; then
+                    echo "Debian/proot startup failed; see logs/app.log for detail."
+                fi
+            else
+                echo "Error: native Python environment is unavailable and proot-distro is not installed."
             fi
         elif [ -x "$APP_DIR/.venv/bin/python" ]; then
             (cd "$APP_DIR" && nohup "$APP_DIR/.venv/bin/python" -m uvicorn backend.main:app --host 127.0.0.1 --port "$PORT" --no-access-log --no-server-header --log-level warning >> "$LOG_FILE" 2>&1 & echo $! > "$PID_FILE")
@@ -349,6 +273,11 @@ os.chmod(t,0o600); os.replace(t,p)
 PYPORT
                 echo "The configured port was unavailable, so the gallery recovered automatically and saved a working port."
             else echo "Gallery started successfully."; fi
+            if [ -n "${TUNNEL_TOKEN:-}" ] && [ -x "$APP_DIR/bin/cloudflared" ]; then
+                echo "Starting Cloudflare Tunnel..."
+                nohup "$APP_DIR/bin/cloudflared" tunnel --token "$TUNNEL_TOKEN" run > "$APP_DIR/logs/tunnel.log" 2>&1 &
+                echo $! > "$TUNNEL_PID_FILE"
+            fi
             return 0
         fi
         rm -f "$PID_FILE"

@@ -36,11 +36,15 @@ else
  echo "Native dependencies failed. Trying Debian/proot fallback..."
  pkg_retry proot-distro || exit 1
  proot-distro install debian 2>/dev/null || true
- proot-distro login debian -- env ADMIN_PASS="$ADMIN_PASS" APP_NAME="$APP_NAME" bash <<'EOF'
+ # proot-distro does NOT put the Termux app directory at $HOME inside Debian
+ # (Debian's root user has its own $HOME=/root). Bind-mount it explicitly to
+ # a fixed, known path so the container side never has to guess.
+ PROOT_APP_DIR="/root/$APP_NAME"
+ proot-distro login debian --bind "$APP_DIR:$PROOT_APP_DIR" -- env ADMIN_PASS="$ADMIN_PASS" REPO_DIR="$PROOT_APP_DIR" bash <<'EOF'
 set -e
 apt update
 apt install -y -o Acquire::Retries=3 python3 python3-pip python3-venv libjpeg-dev zlib1g-dev
-REPO_DIR="$HOME/$APP_NAME"; [ -d "$REPO_DIR" ] || REPO_DIR="/root/$APP_NAME"
+[ -d "$REPO_DIR" ] || { echo "Gallery directory not visible inside Debian (bind mount failed)." >&2; exit 1; }
 python3 -m venv /opt/venv
 source /opt/venv/bin/activate
 pip install -r "$REPO_DIR/requirements.txt"
