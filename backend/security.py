@@ -1,5 +1,5 @@
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import Argon2Error, InvalidHashError
 import secrets
 import time
 
@@ -8,10 +8,12 @@ ph = PasswordHasher()
 def hash_password(password: str) -> str:
     return ph.hash(password)
 
-def verify_password(hash: str, password: str) -> bool:
+def verify_password(password_hash: str, password: str) -> bool:
+    if not password_hash or not password:
+        return False
     try:
-        return ph.verify(hash, password)
-    except VerifyMismatchError:
+        return ph.verify(password_hash, password)
+    except (Argon2Error, InvalidHashError, TypeError, ValueError):
         return False
 
 # Simple session management in memory for now, or use a signed cookie.

@@ -9,16 +9,24 @@ except ImportError:
     except ImportError:
         tflite = None
 
-MODEL_PATH = "models/nsfw_model.tflite"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(BASE_DIR, "models", "nsfw_model.tflite")
 
 class ContentModerator:
     def __init__(self):
         self.interpreter = None
-        if tflite and os.path.exists(MODEL_PATH):
-            self.interpreter = tflite.Interpreter(model_path=MODEL_PATH)
-            self.interpreter.allocate_tensors()
-            self.input_details = self.interpreter.get_input_details()
-            self.output_details = self.interpreter.get_output_details()
+        self.input_details = None
+        self.output_details = None
+        # Only load a real model: skip empty placeholder files and never let a
+        # broken model file crash the whole app (we fail closed instead).
+        if tflite and os.path.isfile(MODEL_PATH) and os.path.getsize(MODEL_PATH) > 0:
+            try:
+                self.interpreter = tflite.Interpreter(model_path=MODEL_PATH)
+                self.interpreter.allocate_tensors()
+                self.input_details = self.interpreter.get_input_details()
+                self.output_details = self.interpreter.get_output_details()
+            except Exception:
+                self.interpreter = None
 
     def predict(self, image_path):
         if not self.interpreter:
@@ -26,12 +34,12 @@ class ContentModerator:
 
         from PIL import Image as PILImage
         img = PILImage.open(image_path).convert('RGB')
-        
+
         # Resize according to model requirements (usually 224x224)
         input_shape = self.input_details[0]['shape']
         img = img.resize((input_shape[1], input_shape[2]))
-        
-        input_data = np.expand_dims(img, axis=0).astype(np.float32)
+
+        input_data = np.expand_dims(np.asarray(img), axis=0).astype(np.float32)
         # Normalize if necessary (depends on the model used)
         input_data = input_data / 255.0
 
