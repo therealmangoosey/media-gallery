@@ -8,7 +8,9 @@ venv/
 # App Specific
 gallery.db
 .admin_pass_hash
+.secret_key
 .env
+settings.json
 uploads/staging/*
 uploads/public/*
 uploads/quarantine/*

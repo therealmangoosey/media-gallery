@@ -1,47 +1,73 @@
+"""Image validation and (re-)encoding.
+
+Every upload is re-encoded to WebP. This strips EXIF/GPS metadata, auto-orients
+photos, normalizes the pixel format, and produces a compact file plus a small
+thumbnail so the gallery loads quickly.
+"""
+
+import io
+
 from PIL import Image as PILImage
 from PIL import ImageOps
-import io
-import os
-import uuid
 
-ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+ALLOWED_FORMATS = {"jpeg", "png", "webp"}
+
+# Reject anything above these limits before decoding further. This prevents
+# decompression-bomb / memory-exhaustion attacks via a hostile image.
+MAX_DIMENSION = 12000
+MAX_PIXELS = 40_000_000  # 40 MP
+
+# Enforce Pillow's own guard at the same limit as a second line of defense
+# (in case a crafted header lies about dimensions until decode time).
+PILImage.MAX_IMAGE_PIXELS = MAX_PIXELS
+
+THUMBNAIL_MAX = 480
+QUALITY = 82
+
 
 def validate_image(file_content: bytes):
+    """Return (ok, format_name_or_error)."""
     try:
         img = PILImage.open(io.BytesIO(file_content))
-        img.verify() # Verify it's a valid image
-        
-        # Check format
-        if img.format.lower() not in ['jpeg', 'png', 'webp']:
+        fmt = (img.format or "").lower()
+        if fmt not in ALLOWED_FORMATS:
             return False, "Unsupported format"
-            
-        # Check dimensions
-        if img.width > 5000 or img.height > 5000:
-            return False, "Image too large"
-            
-        return True, img.format.lower()
-    except Exception as e:
-        return False, str(e)
 
-def process_and_save(file_content: bytes, target_path: str):
-    """
-    Re-encodes image to strip metadata and normalize.
-    """
-    img = PILImage.open(io.BytesIO(file_content))
-    
-    # Auto-orient based on EXIF then strip EXIF
+        width, height = img.size
+        if width > MAX_DIMENSION or height > MAX_DIMENSION:
+            return False, f"Image too large ({width}x{height})"
+        if width * height > MAX_PIXELS:
+            return False, "Image has too many pixels"
+
+        # Verify the whole image actually decodes (catches truncated/corrupt
+        # files that only look valid in the header).
+        img.verify()
+        return True, fmt
+    except Exception as exc:  # noqa: BLE001 - any decode error is a reject
+        return False, f"Invalid image data: {exc}"
+
+
+def _reencode(img: PILImage.Image, target_path: str, max_side: int | None = None):
     img = ImageOps.exif_transpose(img)
-    
-    # Create a new image without metadata
-    # We use RGB to ensure compatibility and strip alpha if not needed, 
-    # or keep RGBA if the original has it.
-    mode = img.mode
-    if mode not in ("RGB", "RGBA"):
-        img = img.convert("RGB")
-        mode = "RGB"
 
-    new_img = PILImage.new(mode, img.size)
-    new_img.paste(img)
-    
-    new_img.save(target_path, "WEBP", quality=85, method=6)
+    # Flatten exotic modes (P, LA, CMYK, I, F...) to RGB/RGBA.
+    if img.mode not in ("RGB", "RGBA"):
+        has_alpha = img.mode in ("LA", "PA") or (
+            img.mode == "P" and "transparency" in img.info
+        )
+        img = img.convert("RGBA" if has_alpha else "RGB")
+
+    if max_side:
+        img.thumbnail((max_side, max_side), PILImage.LANCZOS)
+
+    img.save(target_path, "WEBP", quality=QUALITY, method=6)
+
+
+def process_and_save(file_content: bytes, main_path: str, thumb_path: str | None = None):
+    """Re-encode to WebP, writing the full image and (optionally) a thumbnail."""
+    img = PILImage.open(io.BytesIO(file_content))
+    _reencode(img, main_path)
+    if thumb_path:
+        _reencode(img.copy(), thumb_path, max_side=THUMBNAIL_MAX)
     return True
