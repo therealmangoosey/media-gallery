@@ -48,6 +48,7 @@ MENU_ITEMS=(
     "Configure Discord webhook|do_discord"
     "Configure Cloudflare Tunnel|do_tunnel"
     "Run security test|do_sec_test"
+    "Update application (keeps media & accounts)|do_update"
 )
 
 EXIT_CHOICE=0
@@ -108,6 +109,10 @@ do_tunnel() { configure_tunnel; }
 
 do_sec_test() {
     bash "$SCRIPT_DIR/test_security.sh"
+}
+
+do_update() {
+    bash "$SCRIPT_DIR/update.sh"
 }
 
 dispatch() {
