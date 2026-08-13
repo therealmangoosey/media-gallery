@@ -1,20 +1,46 @@
 import os
 import uuid
 import shutil
-import datetime
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request, Form, Response
+import time
+
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from .database import SessionLocal, engine, Image, Report, AdminAction, init_db, get_db
-from .security import hash_password, verify_password, create_session, validate_session, delete_session, SESSION_COOKIE_NAME
+from .database import Image, Report, init_db, get_db
+from .security import verify_password, create_session, validate_session, SESSION_COOKIE_NAME
 from .image_processing import validate_image, process_and_save
 from .moderation import ContentModerator
 
-# Directories
-STAGING_DIR = "uploads/staging"
-PUBLIC_DIR = "uploads/public"
-QUARANTINE_DIR = "uploads/quarantine"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Directories (absolute so they work regardless of the process CWD)
+STAGING_DIR = os.path.join(BASE_DIR, "uploads", "staging")
+PUBLIC_DIR = os.path.join(BASE_DIR, "uploads", "public")
+QUARANTINE_DIR = os.path.join(BASE_DIR, "uploads", "quarantine")
+
+
+def _load_env_file():
+    """Load a simple KEY=VALUE .env file without external dependencies."""
+    env_path = os.path.join(BASE_DIR, ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_env_file()
+
+# Make sure the upload directories exist before any upload is attempted.
+for _dir in (STAGING_DIR, PUBLIC_DIR, QUARANTINE_DIR):
+    os.makedirs(_dir, exist_ok=True)
 
 app = FastAPI()
 moderator = ContentModerator()
@@ -22,12 +48,17 @@ moderator = ContentModerator()
 # Initialize DB
 init_db()
 
-# Admin credentials (set via env or installer)
+# Admin credentials (set via env, .env, or the .admin_pass_hash installer file)
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH")
+if not ADMIN_PASSWORD_HASH:
+    hash_file = os.path.join(BASE_DIR, ".admin_pass_hash")
+    if os.path.exists(hash_file):
+        with open(hash_file) as f:
+            ADMIN_PASSWORD_HASH = f.read().strip() or None
 
-# Thresholds
-AUTO_APPROVE_THRESHOLD = 0.2
-AUTO_REJECT_THRESHOLD = 0.8
+# Thresholds (overridable via .env / environment)
+AUTO_APPROVE_THRESHOLD = float(os.getenv("AUTO_APPROVE_THRESHOLD", "0.2"))
+AUTO_REJECT_THRESHOLD = float(os.getenv("AUTO_REJECT_THRESHOLD", "0.8"))
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -67,8 +98,6 @@ async def upload_page():
     </form>
     """
 
-import time
-
 # Simple rate limiting
 UPLOAD_LIMITS = {} # ip -> [timestamps]
 
@@ -78,7 +107,7 @@ def check_rate_limit(ip: str):
         UPLOAD_LIMITS[ip] = []
     # Keep only last 10 minutes
     UPLOAD_LIMITS[ip] = [t for t in UPLOAD_LIMITS[ip] if now - t < 600]
-    if len(UPLOAD_LIMITS[ip]) > 10: # 10 uploads per 10 mins
+    if len(UPLOAD_LIMITS[ip]) >= 10: # 10 uploads per 10 mins
         return False
     UPLOAD_LIMITS[ip].append(now)
     return True
@@ -116,7 +145,11 @@ async def upload_image(request: Request, file: UploadFile = File(...), db: Sessi
     process_and_save(content, processed_path)
     
     # 3. Moderation
-    score, reason = moderator.predict(processed_path)
+    try:
+        score, reason = moderator.predict(processed_path)
+    except Exception:
+        # Fail closed: quarantine if moderation crashes for any reason.
+        score, reason = 0.5, "Moderation error"
     
     status = "quarantined"
     if score < AUTO_APPROVE_THRESHOLD:
@@ -157,8 +190,12 @@ async def get_image(filename: str, db: Session = Depends(get_db)):
     img = db.query(Image).filter(Image.uuid == uuid_str).first()
     if not img or img.status != "approved":
         raise HTTPException(status_code=404)
-    
-    return FileResponse(os.path.join(PUBLIC_DIR, filename))
+
+    # Build the path from the stored record, never from the raw URL input.
+    safe_path = os.path.join(PUBLIC_DIR, f"{img.uuid}.{img.extension}")
+    if not os.path.exists(safe_path):
+        raise HTTPException(status_code=404)
+    return FileResponse(safe_path)
 
 # --- Report Routes ---
 @app.get("/report/{image_uuid}", response_class=HTMLResponse)
@@ -204,6 +241,8 @@ async def login_page():
 
 @app.post("/login")
 async def login(password: str = Form(...)):
+    if not ADMIN_PASSWORD_HASH:
+        raise HTTPException(status_code=503, detail="Admin password is not configured. Run install.sh first.")
     if verify_password(ADMIN_PASSWORD_HASH, password):
         session_id = create_session("admin")
         response = RedirectResponse(url="/admin", status_code=303)
