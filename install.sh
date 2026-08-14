@@ -43,7 +43,7 @@ else
  proot-distro login debian --bind "$APP_DIR:$PROOT_APP_DIR" -- env ADMIN_PASS="$ADMIN_PASS" REPO_DIR="$PROOT_APP_DIR" bash <<'EOF'
 set -e
 apt update
-apt install -y -o Acquire::Retries=3 python3 python3-pip python3-venv libjpeg-dev zlib1g-dev
+apt install -y -o Acquire::Retries=3 build-essential python3 python3-dev python3-pip python3-venv libffi-dev libjpeg-dev zlib1g-dev
 [ -d "$REPO_DIR" ] || { echo "Gallery directory not visible inside Debian (bind mount failed)." >&2; exit 1; }
 python3 -m venv /opt/venv
 source /opt/venv/bin/activate
