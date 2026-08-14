@@ -28,16 +28,19 @@ if [ -f "$APP_DIR/settings.json" ] && command -v python3 >/dev/null 2>&1; then
     PORT="$(read_setting server.port 8000)"
 fi
 
-log() { echo "[manage] $*"; }
-
 load_env_safe() {
     local file="$1" line key value
     [ -f "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|\#*) continue ;; esac
         key="${line%%=*}"
-        [ -z "$key" ] && continue
         value="${line#*=}"
+        case "$key" in
+            DISCORD_WEBHOOK_URL|TUNNEL_TOKEN|TURNSTILE_SECRET_KEY|GALLERY_SECRET_KEY)
+                ;;
+            *) continue ;;
+        esac
+        [ -n "$key" ] || continue
         case "$value" in
             \'*\') value="${value#\'}"; value="${value%\'}" ;;
             \"*\") value="${value#\"}"; value="${value%\"}" ;;
@@ -161,27 +164,18 @@ logs() {
 }
 
 write_log_header() {
-    mkdir -p "$APP_DIR/logs"
-    touch "$LOG_FILE"
-    chmod 600 "$LOG_FILE" 2>/dev/null || true
+    mkdir -p "$APP_DIR/logs"; touch "$LOG_FILE"; chmod 600 "$LOG_FILE" 2>/dev/null || true
     printf '\n[%s] ===== startup attempt =====\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" >> "$LOG_FILE"
 }
-
-record_start_error() {
-    local msg="$1"
-    printf '[%s] STARTUP ERROR: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$msg" >> "$LOG_FILE"
-}
+record_start_error() { printf '[%s] STARTUP ERROR: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$1" >> "$LOG_FILE"; }
 
 start() {
     local storage public quarantine staging auto_recover use_proot candidate attempts=0 started=0 proot_dir native_python
     storage="$(read_setting server.storage_directory uploads)"; public="$(read_setting server.public_path public)"; quarantine="$(read_setting server.quarantine_path quarantine)"; staging="$(read_setting server.staging_path staging)"
-    for part in "$storage" "$public" "$quarantine" "$staging"; do
-        case "$part" in ""|.|..|*/*|*..*) echo "Error: unsafe storage setting."; return 1;; esac
-    done
+    for part in "$storage" "$public" "$quarantine" "$staging"; do case "$part" in ""|.|..|*/*|*..*) echo "Error: unsafe storage setting."; return 1;; esac; done
     mkdir -p "$APP_DIR/$storage/$public" "$APP_DIR/$storage/$quarantine" "$APP_DIR/$storage/$staging" "$APP_DIR/logs" || { echo "Error: cannot create required directories."; return 1; }
     chmod 700 "$APP_DIR/$storage" "$APP_DIR/$storage/$public" "$APP_DIR/$storage/$quarantine" "$APP_DIR/$storage/$staging" 2>/dev/null || true
     write_log_header
-
     if [ -f "$PID_FILE" ]; then
         local existing_pid; existing_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
         if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null && is_port_open; then echo "Gallery is already running."; return 0; fi
@@ -189,17 +183,10 @@ start() {
     fi
     if [ ! -s "$APP_DIR/.admin_pass_hash" ]; then record_start_error "Admin password hash is missing. Run install.sh first."; echo "Admin password is not configured. Run install.sh first."; return 1; fi
     ADMIN_PASSWORD_HASH="$(cat "$APP_DIR/.admin_pass_hash")"; export ADMIN_PASSWORD_HASH
-    auto_recover="$(read_setting runtime.auto_recover true)"; use_proot="$(read_setting runtime.use_proot false)"
-    load_env_safe "$ENV_FILE"
-    candidate="$(read_setting server.port 8000)"
-    [[ "$candidate" =~ ^[0-9]+$ ]] || candidate=8000
-    if [ "$candidate" -lt 1024 ] || [ "$candidate" -gt 65535 ]; then candidate=8000; fi
-
+    auto_recover="$(read_setting runtime.auto_recover true)"; use_proot="$(read_setting runtime.use_proot false)"; load_env_safe "$ENV_FILE"
+    candidate="$(read_setting server.port 8000)"; [[ "$candidate" =~ ^[0-9]+$ ]] || candidate=8000; if [ "$candidate" -lt 1024 ] || [ "$candidate" -gt 65535 ]; then candidate=8000; fi
     while [ "$attempts" -lt 4 ]; do
-        PORT="$candidate"; attempts=$((attempts+1)); started=0; rm -f "$PID_FILE"
-        echo "Starting gallery (attempt $attempts)..."
-        write_log_header
-        native_python="$APP_DIR/.venv/bin/python"
+        PORT="$candidate"; attempts=$((attempts+1)); started=0; rm -f "$PID_FILE"; echo "Starting gallery (attempt $attempts)..."; write_log_header; native_python="$APP_DIR/.venv/bin/python"
         if [ "$use_proot" = "true" ] || [ "$use_proot" = "True" ]; then
             if command -v proot-distro >/dev/null 2>&1; then
                 proot_dir="/root/$APP_NAME"
@@ -208,22 +195,14 @@ start() {
                     [ -x /opt/venv/bin/python ] || { echo "Python environment missing inside Debian; rerun install.sh" >&2; exit 1; }
                     nohup /opt/venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port "$PORT" --no-access-log --no-server-header --log-level warning >> logs/app.log 2>&1 &
                     echo $! > app.pid
-                '; then
-                    record_start_error "Debian/proot launch command failed."
-                fi
+                '; then record_start_error "Debian/proot launch command failed."; fi
             else record_start_error "runtime.use_proot is enabled but proot-distro is not installed."; fi
         elif [ -x "$native_python" ]; then
             (cd "$APP_DIR" && nohup "$native_python" -m uvicorn backend.main:app --host 127.0.0.1 --port "$PORT" --no-access-log --no-server-header --log-level warning >> "$LOG_FILE" 2>&1 & echo $! > "$PID_FILE")
         elif command -v python3 >/dev/null 2>&1; then
             (cd "$APP_DIR" && nohup python3 -m uvicorn backend.main:app --host 127.0.0.1 --port "$PORT" --no-access-log --no-server-header --log-level warning >> "$LOG_FILE" 2>&1 & echo $! > "$PID_FILE")
-        else
-            record_start_error "No usable Python runtime was found."; echo "Python 3 is not available. Run install.sh again."; return 1
-        fi
-
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            if is_port_open; then started=1; break; fi
-            sleep 1
-        done
+        else record_start_error "No usable Python runtime was found."; echo "Python 3 is not available. Run install.sh again."; return 1; fi
+        for _ in 1 2 3 4 5 6 7 8 9 10; do if is_port_open; then started=1; break; fi; sleep 1; done
         if [ "$started" -eq 1 ]; then
             local configured_port; configured_port="$(read_setting server.port 8000)"
             if [ "$PORT" != "$configured_port" ] && [ "$auto_recover" = "true" ]; then
@@ -231,47 +210,25 @@ start() {
 import json,sys,tempfile,os
 p=sys.argv[1]; port=int(sys.argv[2])
 try:
-    with open(p,encoding='utf-8') as f: d=json.load(f)
-except Exception: d={}
+ with open(p,encoding='utf-8') as f:d=json.load(f)
+except Exception:d={}
 d.setdefault('server',{})['port']=port
 fd,t=tempfile.mkstemp(dir=os.path.dirname(p));
-with os.fdopen(fd,'w',encoding='utf-8') as f: json.dump(d,f,indent=2); f.write('\n'); f.flush(); os.fsync(f.fileno())
-os.chmod(t,0o600); os.replace(t,p)
+with os.fdopen(fd,'w',encoding='utf-8') as f:json.dump(d,f,indent=2);f.write('\n');f.flush();os.fsync(f.fileno())
+os.chmod(t,0o600);os.replace(t,p)
 PYPORT
-                then echo "The configured port was unavailable; the gallery recovered automatically and saved the working port."
-                else record_start_error "Gallery started on fallback port but settings could not be updated."
-                fi
+                then echo "The configured port was unavailable; the gallery recovered automatically and saved the working port."; else record_start_error "Gallery started on fallback port but settings could not be updated."; fi
             else echo "Gallery started successfully."; fi
-            if [ -n "${TUNNEL_TOKEN:-}" ] && [ -x "$APP_DIR/bin/cloudflared" ]; then
-                echo "Starting Cloudflare Tunnel..."
-                nohup "$APP_DIR/bin/cloudflared" tunnel --token "$TUNNEL_TOKEN" run >> "$APP_DIR/logs/tunnel.log" 2>&1 & echo $! > "$TUNNEL_PID_FILE"
-            fi
+            if [ -n "${TUNNEL_TOKEN:-}" ] && [ -x "$APP_DIR/bin/cloudflared" ]; then echo "Starting Cloudflare Tunnel..."; nohup "$APP_DIR/bin/cloudflared" tunnel --token "$TUNNEL_TOKEN" run >> "$APP_DIR/logs/tunnel.log" 2>&1 & echo $! > "$TUNNEL_PID_FILE"; fi
             return 0
         fi
-        if [ -f "$LOG_FILE" ]; then
-            record_start_error "Process did not become healthy on port $PORT. Recent output follows."
-            tail -n 20 "$LOG_FILE" | sed 's/^/[startup] /'
-        else record_start_error "Process did not become healthy and no log file was produced."; fi
-        rm -f "$PID_FILE"
-        [ "$auto_recover" = "true" ] || break
-        candidate=$((candidate+1)); use_proot="false"
+        if [ -f "$LOG_FILE" ]; then record_start_error "Process did not become healthy on port $PORT. Recent output follows."; tail -n 20 "$LOG_FILE" | sed 's/^/[startup] /'; else record_start_error "Process did not become healthy and no log file was produced."; fi
+        rm -f "$PID_FILE"; [ "$auto_recover" = "true" ] || break; candidate=$((candidate+1)); use_proot="false"
     done
-    echo "Gallery could not start after automatic recovery attempts. Select 'View logs' for the diagnostic output."
-    return 1
+    echo "Gallery could not start after automatic recovery attempts. Select 'View logs' for the diagnostic output."; return 1
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     case "${1:-}" in
-        start) start ;;
-        stop) stop ;;
-        restart) stop; start ;;
-        status) status ;;
-        logs) logs ;;
-        backup) backup ;;
-        restore) restore "${2:-}" ;;
-        settings) exec python3 "$SCRIPT_DIR/settings_cli.py" ;;
-        discord) configure_discord ;;
-        tunnel) configure_tunnel ;;
-        *) echo "Usage: $0 {start|stop|restart|status|logs|backup|restore|settings|discord|tunnel}"; exit 2 ;;
-    esac
+        start) start ;; stop) stop ;; restart) stop; start ;; status) status ;; logs) logs ;; backup) backup ;; restore) restore "${2:-}" ;; settings) exec python3 "$SCRIPT_DIR/settings_cli.py" ;; discord) configure_discord ;; tunnel) configure_tunnel ;; *) echo "Usage: $0 {start|stop|restart|status|logs|backup|restore|settings|discord|tunnel}"; exit 2 ;; esac
 fi
