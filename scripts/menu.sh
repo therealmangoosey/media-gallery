@@ -1,12 +1,6 @@
 #!/bin/bash
 
 # Interactive command-line menu for Media Gallery.
-#
-# Prints an ASCII-art banner and a numbered list of options, reads a numeric
-# selection, validates it, and dispatches to the corresponding function (which
-# is sourced from manage.sh). After each action the menu is redisplayed until
-# the user chooses to exit. Invalid input prints an error and reprompts.
-
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,20 +16,13 @@ BANNER='#   # ##### ####  #####   #          ####   #   #     #     ##### ####  
 #   # #     #   #   #   #   #       #   # #   # #     #     #     #  #    #
 #   # ##### ####  ##### #   #        #### #   # ##### ##### ##### #   #   #'
 
-# Colors (only when stdout is a terminal, so output stays clean when piped).
 if [ -t 1 ]; then
-    C_RESET=$'\033[0m'
-    C_BOLD=$'\033[1m'
-    C_CYAN=$'\033[36m'
-    C_GREEN=$'\033[32m'
-    C_YELLOW=$'\033[33m'
-    C_RED=$'\033[31m'
-    C_DIM=$'\033[2m'
+    C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_CYAN=$'\033[36m'; C_GREEN=$'\033[32m'
+    C_YELLOW=$'\033[33m'; C_RED=$'\033[31m'; C_DIM=$'\033[2m'
 else
     C_RESET='' C_BOLD='' C_CYAN='' C_GREEN='' C_YELLOW='' C_RED='' C_DIM=''
 fi
 
-# Menu entries: "label|function_name"
 MENU_ITEMS=(
     "Start the gallery|do_start"
     "Stop the gallery|do_stop"
@@ -55,7 +42,7 @@ EXIT_CHOICE=0
 
 show_banner() {
     printf '%s\n' "${C_CYAN}${C_BOLD}${BANNER}${C_RESET}"
-    printf '%s\n' "${C_DIM}Self-hosted, private-by-design image gallery${C_RESET}"
+    printf '%s\n' "${C_DIM}Self-hosted, private-by-design media gallery${C_RESET}"
 }
 
 show_menu() {
@@ -70,79 +57,64 @@ show_menu() {
 }
 
 pause() {
-    # Only prompt when running interactively (stdin is a terminal).
     if [ -t 0 ]; then
-        read -rp "Press Enter to return to the menu..." _dummy
+        read -rp "Press Enter to return to the menu..." _dummy || true
     fi
 }
 
-# --- Menu actions -----------------------------------------------------------
+run_action() {
+    local name="$1"
+    if ! type "$name" >/dev/null 2>&1; then
+        echo "${C_RED}Error: action '$name' is unavailable.${C_RESET}"
+        return 1
+    fi
+    "$name"
+}
 
 do_start() { start; }
-
 do_stop() { stop; }
-
 do_restart() { stop; start; }
-
 do_status() { status; }
-
 do_logs() { logs; }
-
 do_backup() { backup; }
-
 do_restore() {
-    local file
-    read -rp "Path to backup file (.gpg): " file
+    local file=''
+    if [ -t 0 ]; then
+        read -rp "Path to backup file (.gpg): " file || return 1
+    fi
     if [ -z "$file" ]; then
         echo "No file provided."
         return 1
     fi
     restore "$file"
 }
-
-do_settings() {
-    python3 "$SCRIPT_DIR/settings_cli.py"
-}
-
+do_settings() { python3 "$SCRIPT_DIR/settings_cli.py"; }
 do_discord() { configure_discord; }
 do_tunnel() { configure_tunnel; }
-
-do_sec_test() {
-    bash "$SCRIPT_DIR/test_security.sh"
-}
-
-do_update() {
-    bash "$SCRIPT_DIR/update.sh"
-}
+do_sec_test() { bash "$SCRIPT_DIR/test_security.sh"; }
+do_update() { bash "$SCRIPT_DIR/update.sh"; }
 
 dispatch() {
-    case "$1" in
-        1) do_start ;;
-        2) do_stop ;;
-        3) do_restart ;;
-        4) do_status ;;
-        5) do_logs ;;
-        6) do_backup ;;
-        7) do_restore ;;
-        8) do_settings ;;
-        9) do_discord ;;
-        10) do_tunnel ;;
-        11) do_sec_test ;;
-        *) return 1 ;;
-    esac
+    local choice="$1" index=$((choice - 1)) item fn
+    if [ "$index" -lt 0 ] || [ "$index" -ge "${#MENU_ITEMS[@]}" ]; then
+        return 1
+    fi
+    item="${MENU_ITEMS[$index]}"
+    fn="${item#*|}"
+    run_action "$fn"
 }
 
-# --- Main loop --------------------------------------------------------------
-
 main() {
-    local choice
+    local choice=''
     while true; do
         show_banner
         show_menu
 
-        read -rp "Selection [0-${#MENU_ITEMS[@]}]: " choice || { echo ""; break; }
+        if ! read -rp "Selection [0-${#MENU_ITEMS[@]}]: " choice; then
+            echo ""
+            break
+        fi
 
-        # Validate: must be a non-negative integer within range.
         if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
             echo "${C_YELLOW}Invalid input: '$choice' is not a number.${C_RESET}"
             pause
@@ -160,10 +132,9 @@ main() {
             continue
         fi
 
-        dispatch "$choice" || {
-            echo "${C_RED}Error: could not run selection $choice.${C_RESET}"
-        }
-
+        if ! dispatch "$choice"; then
+            echo "${C_RED}Error: selection $choice failed.${C_RESET}"
+        fi
         pause
     done
 }
