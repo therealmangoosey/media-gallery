@@ -37,8 +37,6 @@ check_private_file(){
     if (( (mode & 077) == 0 )); then echo "[PASS] $file is private ($perms)."; else echo "[FAIL] $file has unsafe permissions: $perms."; FAIL=1; fi
 }
 
-# The application lazily creates .secret_key when its security helpers are imported.
-# Create it here if the installation has not booted far enough to do so yet.
 if [ ! -s ".secret_key" ] && [ -z "${GALLERY_SECRET_KEY:-}" ]; then
     umask 077
     python3 - <<'PY' >/dev/null 2>&1 || true
@@ -67,7 +65,11 @@ for dir in "$STORAGE_DIR" "$STORAGE_DIR/staging" "$STORAGE_DIR/public" "$STORAGE
     fi
 done
 
-[ -x "bin/cloudflared" ] && echo "[PASS] Cloudflare Tunnel binary is executable."
+if command -v cloudflared >/dev/null 2>&1; then
+    if cloudflared --version >/dev/null 2>&1; then echo "[PASS] Native Termux Cloudflare Tunnel is installed and executable."; else echo "[FAIL] Native Termux cloudflared is installed but cannot execute."; FAIL=1; fi
+else
+    echo "[WARN] Native Termux cloudflared is not installed (Cloudflare Tunnel will be unavailable)."
+fi
 [ -x "scripts/settings_cli.py" ] && echo "[PASS] Configuration panel is installed."
 
 if [ "$FAIL" -ne 0 ]; then echo "Security test failed. Fix the [FAIL] items before exposing the gallery."; exit 1; fi
