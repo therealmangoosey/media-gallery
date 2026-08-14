@@ -87,7 +87,7 @@ fi
 
 start_native() {
     local py="$1" p="$2"
-    [ -x "$py" ] || [ -x "$py" ] || return 1
+    [ -x "$py" ] || return 1
     log "Testing native Python: $py"
     if ! (cd "$APP_DIR" && "$py" -c 'import fastapi,uvicorn,sqlalchemy,PIL; import backend.main' >>"$LOG_FILE" 2>&1); then
         log "Native preflight failed. The traceback above is the actual import/startup error."
@@ -107,28 +107,26 @@ start_system_python() {
 }
 
 start_proot() {
-    command -v proot-distro >/dev/null 2>&1 || return 1
+    command -v proot-distro >/dev/null 2>&1 || { log "proot-distro is not installed."; return 1; }
     local app_name proot_dir
-    app_name="$(basename "$APP_DIR")"; proot_dir="/root/$app_name"
-    log "Testing Debian/proot Python before backgrounding the server."
-    if ! proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$port" bash -c '
-        cd "$REPO_DIR" || exit 1
-        [ -x /opt/venv/bin/python ] || { echo "ERROR: /opt/venv/bin/python is missing"; exit 1; }
-        /opt/venv/bin/python -c "import fastapi,uvicorn,sqlalchemy,PIL; import backend.main"
-    ' >>"$LOG_FILE" 2>&1; then
+    app_name="$(basename "$APP_DIR")"
+    proot_dir="/root/$app_name"
+
+    log "Testing Debian/proot Python."
+    if ! proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$port" /opt/venv/bin/python -c 'import fastapi,uvicorn,sqlalchemy,PIL; import backend.main; print("PRE-FLIGHT OK", flush=True)' >>"$LOG_FILE" 2>&1; then
         log "Debian/proot preflight failed."
         return 1
     fi
-    log "Debian/proot preflight passed. Starting Uvicorn on 127.0.0.1:$port"
+
+    log "Debian/proot preflight passed. Launching persistent proot process on 127.0.0.1:$port"
     rm -f "$PID_FILE"
-    if ! proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$port" bash -c '
-        cd "$REPO_DIR" || exit 1
-        nohup /opt/venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port "$PORT" --no-access-log --no-server-header --log-level info >> logs/app.log 2>&1 &
-        echo $! > app.pid
-    ' >>"$LOG_FILE" 2>&1; then
-        log "Debian/proot launch command failed."
-        return 1
-    fi
+
+    # Keep the proot process itself alive. Starting a background child inside a
+    # short-lived `proot-distro login` shell causes that child to disappear when
+    # the login session exits on Termux.
+    nohup proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$port" /opt/venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port "$port" --no-access-log --no-server-header --log-level info >>"$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+    log "Persistent proot launcher started with PID $(cat "$PID_FILE")"
     return 0
 }
 
@@ -174,5 +172,8 @@ done
 
 fail "Process did not become healthy on port $port."
 tail -n 40 "$LOG_FILE" 2>/dev/null | sed 's/^/[startup] /'
+
+pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+if [[ "$pid" =~ ^[0-9]+$ ]]; then kill "$pid" 2>/dev/null || true; fi
 rm -f "$PID_FILE"
 exit 1
