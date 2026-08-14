@@ -1,14 +1,16 @@
-# Pinned dependency versions (audit-remediation).
-# Update with `pip install -U -r requirements.txt` and re-run `pip-audit`.
+# Media Gallery runtime dependencies for native Termux/Android.
 #
-# Use uvicorn without the [standard] extra. That extra pulls watchfiles
-# (Rust/maturin/pyo3), which fails on Termux/Android with:
-#   Unsupported Android architecture: armv8l
-# Production start scripts do not use --reload, so watchfiles is unused.
-# uvloop (also in [standard]) is likewise unavailable on Android.
+# IMPORTANT: Termux does not use the normal desktop Linux wheel ecosystem.
+# Pillow is supplied by the native Termux package `python-pillow` and is
+# intentionally NOT installed from PyPI here.
+#
+# Pydantic v2 needs pydantic-core, which is Rust/native code. The installer
+# obtains the Android-compatible wheel from the Termux User Repository (TUR)
+# instead of attempting an on-device Rust build.
 fastapi==0.141.1
 uvicorn==0.52.3
 sqlalchemy==2.0.52
-pillow==12.3.0
+pydantic==2.12.5
+pydantic-core==2.41.5
 argon2-cffi==25.1.0
 python-multipart==0.0.32
