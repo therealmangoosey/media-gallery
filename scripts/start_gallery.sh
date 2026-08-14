@@ -31,10 +31,7 @@ load_env() {
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|\#*) continue;; esac
         key="${line%%=*}"; value="${line#*=}"
-        case "$key" in
-            DISCORD_WEBHOOK_URL|TUNNEL_TOKEN|TURNSTILE_SECRET_KEY|GALLERY_SECRET_KEY) ;;
-            *) continue;;
-        esac
+        case "$key" in DISCORD_WEBHOOK_URL|TUNNEL_TOKEN|TURNSTILE_SECRET_KEY|GALLERY_SECRET_KEY) ;; *) continue;; esac
         case "$value" in
             \"*\") value="${value#\"}"; value="${value%\"}";;
             \'*\') value="${value#\'}"; value="${value%\'}";;
@@ -65,7 +62,6 @@ PY
 port="$(read_setting server.port 8000)"
 [[ "$port" =~ ^[0-9]+$ ]] || port=8000
 if [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then port=8000; fi
-
 auto_recover="$(read_setting runtime.auto_recover true)"
 use_proot="$(read_setting runtime.use_proot false)"
 load_env
@@ -85,17 +81,43 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 fi
 
+install_native_deps() {
+    local py="$1"
+    log "Native dependencies are missing. Attempting automatic installation from requirements.txt."
+    if ! "$py" -m pip --version >/dev/null 2>&1; then
+        log "pip is unavailable for $py."
+        return 1
+    fi
+    if ! (cd "$APP_DIR" && "$py" -m pip install -r requirements.txt >>"$LOG_FILE" 2>&1); then
+        log "Native dependency installation failed."
+        return 1
+    fi
+    return 0
+}
+
+native_preflight() {
+    local py="$1"
+    (cd "$APP_DIR" && PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$py" -c 'import fastapi,uvicorn,sqlalchemy,PIL; import backend.main; print("PRE-FLIGHT OK", flush=True)')
+}
+
 start_native() {
     local py="$1" p="$2"
     [ -x "$py" ] || return 1
     log "Testing native Python: $py"
-    if ! (cd "$APP_DIR" && "$py" -c 'import fastapi,uvicorn,sqlalchemy,PIL; import backend.main' >>"$LOG_FILE" 2>&1); then
-        log "Native preflight failed. The traceback above is the actual import/startup error."
-        return 1
+    if ! native_preflight "$py" >>"$LOG_FILE" 2>&1; then
+        log "Native dependencies/import are unavailable; attempting automatic dependency repair."
+        if ! install_native_deps "$py"; then
+            log "Native preflight failed. The traceback above is the actual import/startup error."
+            return 1
+        fi
+        if ! native_preflight "$py" >>"$LOG_FILE" 2>&1; then
+            log "Native preflight still failed after dependency repair."
+            return 1
+        fi
     fi
     log "Native preflight passed. Starting Uvicorn on 127.0.0.1:$p"
     rm -f "$PID_FILE"
-    (cd "$APP_DIR" && nohup "$py" -m uvicorn backend.main:app --host 127.0.0.1 --port "$p" --no-access-log --no-server-header --log-level info >>"$LOG_FILE" 2>&1 & echo $! >"$PID_FILE")
+    (cd "$APP_DIR" && nohup env PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$py" -m uvicorn backend.main:app --host 127.0.0.1 --port "$p" --no-access-log --no-server-header --log-level info >>"$LOG_FILE" 2>&1 & echo $! >"$PID_FILE")
     return 0
 }
 
@@ -112,19 +134,15 @@ start_proot() {
     app_name="$(basename "$APP_DIR")"
     proot_dir="/root/$app_name"
 
-    log "Testing Debian/proot Python."
-    if ! proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$port" /opt/venv/bin/python -c 'import fastapi,uvicorn,sqlalchemy,PIL; import backend.main; print("PRE-FLIGHT OK", flush=True)' >>"$LOG_FILE" 2>&1; then
-        log "Debian/proot preflight failed."
+    log "Testing Debian/proot Python and verifying the bound application directory."
+    if ! proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$port" /bin/bash -c 'set -e; test -f "$REPO_DIR/backend/main.py"; test -x /opt/venv/bin/python; cd "$REPO_DIR"; PYTHONPATH="$REPO_DIR" /opt/venv/bin/python -c "import fastapi,uvicorn,sqlalchemy,PIL; import backend.main; print(\"PRE-FLIGHT OK\", flush=True)"' >>"$LOG_FILE" 2>&1; then
+        log "Debian/proot preflight failed. The application directory or /opt/venv may be missing inside Debian."
         return 1
     fi
 
     log "Debian/proot preflight passed. Launching persistent proot process on 127.0.0.1:$port"
     rm -f "$PID_FILE"
-
-    # Keep the proot process itself alive. Starting a background child inside a
-    # short-lived `proot-distro login` shell causes that child to disappear when
-    # the login session exits on Termux.
-    nohup proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$port" /opt/venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port "$port" --no-access-log --no-server-header --log-level info >>"$LOG_FILE" 2>&1 &
+    nohup proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$port" /bin/bash -c 'cd "$REPO_DIR" && exec env PYTHONPATH="$REPO_DIR" /opt/venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port "$PORT" --no-access-log --no-server-header --log-level info' >>"$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     log "Persistent proot launcher started with PID $(cat "$PID_FILE")"
     return 0
@@ -157,7 +175,7 @@ fi
 
 if [ "$started" -eq 0 ]; then
     fail "No usable Python environment could start the application."
-    tail -n 40 "$LOG_FILE" 2>/dev/null | sed 's/^/[startup] /'
+    tail -n 60 "$LOG_FILE" 2>/dev/null | sed 's/^/[startup] /'
     exit 1
 fi
 
@@ -171,8 +189,7 @@ for _ in $(seq 1 20); do
 done
 
 fail "Process did not become healthy on port $port."
-tail -n 40 "$LOG_FILE" 2>/dev/null | sed 's/^/[startup] /'
-
+tail -n 60 "$LOG_FILE" 2>/dev/null | sed 's/^/[startup] /'
 pid="$(cat "$PID_FILE" 2>/dev/null || true)"
 if [[ "$pid" =~ ^[0-9]+$ ]]; then kill "$pid" 2>/dev/null || true; fi
 rm -f "$PID_FILE"
