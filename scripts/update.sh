@@ -169,7 +169,7 @@ PY
         # /opt/venv only exists inside the Debian proot container, never in
         # Termux itself, so refreshing it means logging back into Debian.
         PROOT_DIR="/root/$(basename "$APP_DIR")"
-        proot-distro login debian --bind "$APP_DIR:$PROOT_DIR" -- env REPO_DIR="$PROOT_DIR" bash -c '
+        proot-distro login debian --bind "$APP_DIR:$PROOT_DIR" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root REPO_DIR="$PROOT_DIR" bash -c '
             [ -f /opt/venv/bin/pip ] || { echo "Python environment missing inside Debian; rerun install.sh" >&2; exit 1; }
             /opt/venv/bin/pip install -r "$REPO_DIR/requirements.txt"
         ' || echo "pip update had errors inside Debian; existing venv and data were left in place."

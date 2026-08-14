@@ -40,7 +40,7 @@ else
  # (Debian's root user has its own $HOME=/root). Bind-mount it explicitly to
  # a fixed, known path so the container side never has to guess.
  PROOT_APP_DIR="/root/$APP_NAME"
- proot-distro login debian --bind "$APP_DIR:$PROOT_APP_DIR" -- env ADMIN_PASS="$ADMIN_PASS" REPO_DIR="$PROOT_APP_DIR" bash <<'EOF'
+ proot-distro login debian --bind "$APP_DIR:$PROOT_APP_DIR" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root ADMIN_PASS="$ADMIN_PASS" REPO_DIR="$PROOT_APP_DIR" bash <<'EOF'
 set -e
 apt update
 apt install -y -o Acquire::Retries=3 build-essential python3 python3-dev python3-pip python3-venv libffi-dev libjpeg-dev zlib1g-dev

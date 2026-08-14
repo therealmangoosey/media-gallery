@@ -244,7 +244,7 @@ start() {
                 # inside Debian (Debian's root user has its own $HOME=/root).
                 # Bind-mount it explicitly to a fixed, known path.
                 proot_dir="/root/$APP_NAME"
-                if ! proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$PORT" bash -c '
+                if ! proot-distro login debian --bind "$APP_DIR:$proot_dir" -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root ADMIN_PASSWORD_HASH="$ADMIN_PASSWORD_HASH" REPO_DIR="$proot_dir" PORT="$PORT" bash -c '
                     cd "$REPO_DIR" || exit 1
                     [ -f /opt/venv/bin/activate ] || { echo "Python environment missing inside Debian; rerun install.sh" >&2; exit 1; }
                     source /opt/venv/bin/activate
