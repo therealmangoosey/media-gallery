@@ -30,17 +30,31 @@ load_env
 [ -s "$APP_DIR/.admin_pass_hash" ] || { fail "Missing .admin_pass_hash. Run install.sh first."; exit 1; }
 export ADMIN_PASSWORD_HASH="$(cat "$APP_DIR/.admin_pass_hash")"
 if [ -f "$PID_FILE" ]; then old="$(cat "$PID_FILE" 2>/dev/null || true)"; if [[ "$old" =~ ^[0-9]+$ ]] && kill -0 "$old" 2>/dev/null && health "$port"; then log "Gallery is already running (PID $old, port $port)."; exit 0; fi; rm -f "$PID_FILE"; fi
-install_native_deps(){ local py="$1"; log "Installing missing Termux dependencies from requirements.txt."; "$py" -m pip --version >/dev/null 2>&1 || return 1; (cd "$APP_DIR" && "$py" -m pip install -r requirements.txt >>"$LOG_FILE" 2>&1); }
+install_native_deps(){
+  local py="$1"
+  log "Preparing the native Termux build toolchain for Python dependencies."
+  command -v pkg >/dev/null 2>&1 || { log "Termux pkg command is unavailable."; return 1; }
+  if ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then
+    log "pydantic-core requires a native Rust build on Termux; installing rust, clang and pkg-config."
+    pkg update >>"$LOG_FILE" 2>&1 || true
+    pkg install -y --fix-missing rust clang pkg-config >>"$LOG_FILE" 2>&1 || return 1
+  fi
+  "$py" -m pip --version >/dev/null 2>&1 || return 1
+  log "Installing missing Termux dependencies from requirements.txt."
+  if (cd "$APP_DIR" && "$py" -m pip install -r requirements.txt >>"$LOG_FILE" 2>&1); then return 0; fi
+  log "Retrying dependency installation without build isolation."
+  (cd "$APP_DIR" && "$py" -m pip install --no-build-isolation -r requirements.txt >>"$LOG_FILE" 2>&1)
+}
 native_preflight(){ local py="$1"; (cd "$APP_DIR" && PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$py" -c 'import fastapi,uvicorn,sqlalchemy,PIL; import backend.main; print("PRE-FLIGHT OK", flush=True)'); }
-start_native(){ local py="$1" p="$2"; [ -x "$py" ] || return 1; log "Testing Termux Python: $py"; if ! native_preflight "$py" >>"$LOG_FILE" 2>&1; then log "Termux dependencies/import are unavailable; attempting repair."; install_native_deps "$py" || return 1; native_preflight "$py" >>"$LOG_FILE" 2>&1 || return 1; fi; log "Termux preflight passed. Starting Uvicorn on $listen_host:$p"; rm -f "$PID_FILE"; (cd "$APP_DIR" && nohup env PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$py" -m uvicorn backend.main:app --host "$listen_host" --port "$p" --no-access-log --no-server-header --log-level info >>"$LOG_FILE" 2>&1 & echo $! >"$PID_FILE"); }
+start_native(){ local py="$1" p="$2"; [ -x "$py" ] || return 1; log "Testing Termux Python: $py"; if ! native_preflight "$py" >>"$LOG_FILE" 2>&1; then log "Termux dependencies/import are unavailable; attempting automatic repair."; install_native_deps "$py" || return 1; native_preflight "$py" >>"$LOG_FILE" 2>&1 || return 1; fi; log "Termux preflight passed. Starting Uvicorn on $listen_host:$p"; rm -f "$PID_FILE"; (cd "$APP_DIR" && nohup env PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$py" -m uvicorn backend.main:app --host "$listen_host" --port "$p" --no-access-log --no-server-header --log-level info >>"$LOG_FILE" 2>&1 & echo $! >"$PID_FILE"); }
 : > "$LOG_FILE"; log "===== startup attempt ====="; log "Termux-only runtime | host: $listen_host | port: $port | auto_recover=$auto_recover"
 started=0
 if [ -x "$APP_DIR/.venv/bin/python" ]; then start_native "$APP_DIR/.venv/bin/python" "$port" && started=1; fi
 if [ "$started" -eq 0 ]; then log "Project .venv unavailable; trying Termux system Python."; py="$(command -v python3 || true)"; [ -n "$py" ] && start_native "$py" "$port" && started=1; fi
-[ "$started" -eq 1 ] || { fail "No usable Termux Python environment could start the application. Run install.sh to repair the environment."; tail -n 80 "$LOG_FILE" | sed 's/^/[startup] /'; exit 1; }
+[ "$started" -eq 1 ] || { fail "No usable Termux Python environment could start the application. Run install.sh to repair the environment."; tail -n 100 "$LOG_FILE" | sed 's/^/[startup] /'; exit 1; }
 healthy=0
 for _ in $(seq 1 20); do if health "$port"; then healthy=1; pid="$(cat "$PID_FILE" 2>/dev/null || true)"; log "Gallery is healthy on http://127.0.0.1:$port (PID ${pid:-unknown})."; break; fi; sleep 1; done
-if [ "$healthy" -ne 1 ]; then fail "Termux process did not become healthy on port $port."; tail -n 80 "$LOG_FILE" | sed 's/^/[startup] /'; pid="$(cat "$PID_FILE" 2>/dev/null || true)"; [[ "$pid" =~ ^[0-9]+$ ]] && kill "$pid" 2>/dev/null || true; rm -f "$PID_FILE"; exit 1; fi
+if [ "$healthy" -ne 1 ]; then fail "Termux process did not become healthy on port $port."; tail -n 100 "$LOG_FILE" | sed 's/^/[startup] /'; pid="$(cat "$PID_FILE" 2>/dev/null || true)"; [[ "$pid" =~ ^[0-9]+$ ]] && kill "$pid" 2>/dev/null || true; rm -f "$PID_FILE"; exit 1; fi
 get_ip(){ ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}'; }
 ip="$(get_ip || true)"; echo ""; echo "================ Connection Info ================"; echo "This device: http://127.0.0.1:$port"; if [ -n "$ip" ]; then echo "Other devices on this Wi-Fi/network: http://$ip:$port"; else echo "Other devices on this Wi-Fi/network: http://<tablet-LAN-IP>:$port"; fi; if [ -n "${TUNNEL_URL:-}" ]; then echo "Cloudflare Tunnel: $TUNNEL_URL"; elif [ -n "${TUNNEL_TOKEN:-}" ]; then echo "Cloudflare Tunnel: enabled"; else echo "Cloudflare Tunnel: off"; fi; echo "=================================================="
 if [ -n "${TUNNEL_TOKEN:-}" ] && [ -x "$APP_DIR/bin/cloudflared" ]; then nohup "$APP_DIR/bin/cloudflared" tunnel --token "$TUNNEL_TOKEN" run >> "$APP_DIR/logs/tunnel.log" 2>&1 & echo $! > "$APP_DIR/tunnel.pid"; fi
