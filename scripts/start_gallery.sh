@@ -31,21 +31,23 @@ load_env
 export ADMIN_PASSWORD_HASH="$(cat "$APP_DIR/.admin_pass_hash")"
 if [ -f "$PID_FILE" ]; then old="$(cat "$PID_FILE" 2>/dev/null || true)"; if [[ "$old" =~ ^[0-9]+$ ]] && kill -0 "$old" 2>/dev/null && health "$port"; then log "Gallery is already running (PID $old, port $port)."; exit 0; fi; rm -f "$PID_FILE"; fi
 install_native_deps(){
-  local py="$1"
-  log "Preparing the native Termux build toolchain for Python dependencies."
+  local py="$1"; local tur="https://termux-user-repository.github.io/pypi/"
+  log "Preparing native Termux dependencies."
   command -v pkg >/dev/null 2>&1 || { log "Termux pkg command is unavailable."; return 1; }
-  if ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then
-    log "pydantic-core requires a native Rust build on Termux; installing rust, clang and pkg-config."
-    pkg update >>"$LOG_FILE" 2>&1 || true
-    pkg install -y --fix-missing rust clang pkg-config >>"$LOG_FILE" 2>&1 || return 1
-  fi
+  pkg update >>"$LOG_FILE" 2>&1 || true
+  pkg install -y --fix-missing python-pip python-pillow clang pkg-config >>"$LOG_FILE" 2>&1 || return 1
   "$py" -m pip --version >/dev/null 2>&1 || return 1
-  log "Installing missing Termux dependencies from requirements.txt."
-  if (cd "$APP_DIR" && "$py" -m pip install -r requirements.txt >>"$LOG_FILE" 2>&1); then return 0; fi
-  log "Retrying dependency installation without build isolation."
-  (cd "$APP_DIR" && "$py" -m pip install --no-build-isolation -r requirements.txt >>"$LOG_FILE" 2>&1)
+  log "Installing Android-compatible Python dependencies from PyPI/TUR."
+  (cd "$APP_DIR" && "$py" -m pip install --only-binary=pydantic-core --extra-index-url "$tur" pydantic==2.12.5 pydantic-core==2.41.5 >>"$LOG_FILE" 2>&1) || return 1
+  (cd "$APP_DIR" && "$py" -m pip install --extra-index-url "$tur" -r requirements.txt >>"$LOG_FILE" 2>&1) || return 1
+  # If this venv predates the Termux-only installer, it may not expose the
+  # native Pillow package. Rebuild it with system-site-packages in that case.
+  if ! (PYTHONPATH="$APP_DIR" "$py" -c 'import PIL' >/dev/null 2>&1); then
+    log "Native Pillow is not visible to this environment; recreate the venv with Termux system packages."
+    return 1
+  fi
 }
-native_preflight(){ local py="$1"; (cd "$APP_DIR" && PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$py" -c 'import fastapi,uvicorn,sqlalchemy,PIL; import backend.main; print("PRE-FLIGHT OK", flush=True)'); }
+native_preflight(){ local py="$1"; (cd "$APP_DIR" && PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$py" -c 'import fastapi,uvicorn,sqlalchemy,PIL,pydantic; import backend.main; print("PRE-FLIGHT OK", flush=True)'); }
 start_native(){ local py="$1" p="$2"; [ -x "$py" ] || return 1; log "Testing Termux Python: $py"; if ! native_preflight "$py" >>"$LOG_FILE" 2>&1; then log "Termux dependencies/import are unavailable; attempting automatic repair."; install_native_deps "$py" || return 1; native_preflight "$py" >>"$LOG_FILE" 2>&1 || return 1; fi; log "Termux preflight passed. Starting Uvicorn on $listen_host:$p"; rm -f "$PID_FILE"; (cd "$APP_DIR" && nohup env PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$py" -m uvicorn backend.main:app --host "$listen_host" --port "$p" --no-access-log --no-server-header --log-level info >>"$LOG_FILE" 2>&1 & echo $! >"$PID_FILE"); }
 : > "$LOG_FILE"; log "===== startup attempt ====="; log "Termux-only runtime | host: $listen_host | port: $port | auto_recover=$auto_recover"
 started=0
