@@ -33,17 +33,21 @@ def load_env():
  p=os.path.join(BASE_DIR,'.env')
  if not os.path.exists(p):return
  try:
-  for line in open(p,encoding='utf-8'):
-   line=line.strip()
-   if line and not line.startswith('#') and '=' in line:
-    k,v=line.split('=',1); k=k.strip(); v=v.strip().strip('"').strip("'")
-    if k in {'DISCORD_WEBHOOK_URL','TUNNEL_TOKEN','TURNSTILE_SECRET_KEY','GALLERY_SECRET_KEY'} and k not in os.environ:os.environ[k]=v
+  with open(p,encoding='utf-8') as f:
+   for line in f:
+    line=line.strip()
+    if line and not line.startswith('#') and '=' in line:
+     k,v=line.split('=',1); k=k.strip(); v=v.strip().strip('"').strip("'")
+     if k in {'DISCORD_WEBHOOK_URL','TUNNEL_TOKEN','TURNSTILE_SECRET_KEY','GALLERY_SECRET_KEY'} and k not in os.environ:os.environ[k]=v
  except OSError:pass
 load_env(); init_db(); app=FastAPI(title='Media Gallery'); app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static'); moderator=ContentModerator()
 ADMIN_PASSWORD_HASH=os.getenv('ADMIN_PASSWORD_HASH')
 if not ADMIN_PASSWORD_HASH:
  p=os.path.join(BASE_DIR,'.admin_pass_hash')
- if os.path.exists(p):ADMIN_PASSWORD_HASH=open(p,encoding='utf-8').read().strip()
+ if os.path.exists(p):
+  try:
+   with open(p,encoding='utf-8') as f: ADMIN_PASSWORD_HASH=f.read().strip()
+  except OSError: ADMIN_PASSWORD_HASH=None
 MODERATION_ENABLED=settings.get_bool('moderation.enabled',True); MODERATION_FAIL_CLOSED=settings.get_bool('moderation.fail_closed',True)
 COOKIE_MAX_AGE=60*60*24*30; _EMERGENCY_STOP=False; _STOP_LOCK=threading.Lock()
 class Limiter:
@@ -51,8 +55,9 @@ class Limiter:
  def allow(self,k,n,w):
   now=time.monotonic()
   with self.lock:
-   a=[x for x in self.h.get(k,[]) if now-x<w]
-   ok=len(a)<n
+   try:n=max(1,int(n));w=max(1,int(w))
+   except (TypeError,ValueError):n,w=10,600
+   a=[x for x in self.h.get(k,[]) if now-x<w]; ok=len(a)<n
    if ok:a.append(now)
    self.h[k]=a
    if len(self.h)>self.max:
@@ -63,8 +68,7 @@ upload_limit=Limiter(); report_limit=Limiter(); login_limit=Limiter(); vote_limi
 def client_ip(req):
  host=req.client.host if req.client else 'unknown'
  if settings.get_bool('security.trust_proxy_headers',True) and host in ('127.0.0.1','::1','localhost'):
-  cf=req.headers.get('CF-Connecting-IP'); x=req.headers.get('X-Forwarded-For')
-  return (cf or (x.split(',')[0] if x else host)).strip()
+  cf=req.headers.get('CF-Connecting-IP'); x=req.headers.get('X-Forwarded-For'); return (cf or (x.split(',')[0] if x else host)).strip()
  return host
 
 def cookie_secure(req):
@@ -92,8 +96,7 @@ def current_user(req,db):
 def turnstile_ok(req,token,action):
  if not settings.get_bool('turnstile.enabled',False):return True
  secret=os.getenv('TURNSTILE_SECRET_KEY','')
- if not secret:return False
- if not token:return False
+ if not secret or not token:return False
  try:
   data=urllib.parse.urlencode({'secret':secret,'response':token,'remoteip':client_ip(req)}).encode()
   with urllib.request.urlopen(urllib.request.Request('https://challenges.cloudflare.com/turnstile/v0/siteverify',data=data),timeout=5) as r:return bool(json.load(r).get('success'))
@@ -103,10 +106,16 @@ def vote_key(req):
  sid=req.cookies.get(SESSION_COOKIE_NAME)
  if sid and validate_session(sid) and session_role(sid)=='user':return 'u:'+str(session_identity(sid)),None
  v=req.cookies.get(VOTE_COOKIE_NAME)
+ if sid and not validate_session(sid):v=None
  if not valid_vote_id(v):v=signed_vote_id()
  return 'v:'+v.split('.',1)[0],v
 
 def allowed_media(file_name,data):return detect_media(data,file_name)
+
+def configured_media_allowed(media):
+ raw=settings.get('uploads.allowed_media','image,audio,video')
+ allowed={x.strip().lower() for x in str(raw).split(',') if x.strip()}
+ return media in allowed
 
 @app.middleware('http')
 async def security_headers(req,call_next):
@@ -153,11 +162,13 @@ async def upload(req:Request,file:UploadFile=File(...),db:Session=Depends(get_db
  if settings.get_bool('turnstile.enabled',False) and settings.get_bool('turnstile.protect_upload',False) and not turnstile_ok(req,form.get('cf-turnstile-response'),'upload'):raise HTTPException(403,'Verification failed. Please try again.')
  user=current_user(req,db)
  if not user and not settings.get_bool('accounts.allow_anonymous_posts',True):return RedirectResponse('/user-login?next=/upload',303)
- maxb=int(settings.get_float('uploads.max_file_mb',50)*1024*1024); data=await file.read(maxb+1)
+ try:maxb=max(1,int(settings.get_float('uploads.max_file_mb',50)*1024*1024))
+ except (TypeError,ValueError):maxb=50*1024*1024
+ data=await file.read(maxb+1)
  if len(data)>maxb:raise HTTPException(413,'File is too large.')
  if not data:raise HTTPException(400,'Empty file.')
  media,mime,ext=allowed_media(file.filename or '',data)
- if not media:raise HTTPException(400,'Unsupported or invalid media type.')
+ if not media or not configured_media_allowed(media):raise HTTPException(400,'This media type is not allowed by the current configuration.')
  title=str(form.get('title') or '').strip()[:120]; desc=str(form.get('description') or '').strip()[:settings.get_int('gallery.max_description',1000)]
  rawtags=str(form.get('tags') or ''); tags=[]
  for t in rawtags.split(','):
@@ -166,13 +177,19 @@ async def upload(req:Request,file:UploadFile=File(...),db:Session=Depends(get_db
   if len(tags)>=settings.get_int('gallery.max_tags',8):break
  uid=str(uuid.uuid4()); tmp=os.path.join(STAGING_DIR,uid+'.tmp'); main_tmp=os.path.join(STAGING_DIR,uid+'.bin'); thumb_tmp=os.path.join(STAGING_DIR,uid+'.thumb.webp')
  try:
-  open(tmp,'wb').write(data)
-  if media=='image':process_and_save(data,main_tmp,thumb_tmp); stored_ext='webp'; final_name=uid+'.webp'
-  else:open(main_tmp,'wb').write(data); stored_ext=ext; final_name=uid+'.'+ext
+  with open(tmp,'wb') as f:f.write(data)
+  if media=='image':
+   ok,reason=validate_image(data)
+   if not ok:raise HTTPException(400,reason)
+   process_and_save(data,main_tmp,thumb_tmp); stored_ext='webp'; final_name=uid+'.webp'
+  else:
+   with open(main_tmp,'wb') as f:f.write(data)
+   stored_ext=ext; final_name=uid+'.'+ext
   score=0.0; reason='Moderation disabled'; status='approved'
   if MODERATION_ENABLED and media=='image':
    try:score,reason=moderator.predict(main_tmp)
-   except Exception:score,reason=0.5,'Moderation error'
+   except Exception:
+    score,reason=0.5,'Moderation error'
    status='quarantined'
    if not MODERATION_FAIL_CLOSED and not moderator.loaded:status='approved';reason='Moderation unavailable; fail-closed disabled'
    elif score<settings.get_float('moderation.auto_approve_threshold',.2):status='approved'
@@ -187,8 +204,9 @@ async def upload(req:Request,file:UploadFile=File(...),db:Session=Depends(get_db
    p=os.path.join(PUBLIC_DIR,final_name); thumb=os.path.join(PUBLIC_DIR,uid+'.thumb.webp') if media=='image' else None
    threading.Thread(target=notify_new_image,args=(p,uid,file.filename,thumb),daemon=True).start()
   return JSONResponse({'message':'Upload successful','status':status,'id':uid})
+ except HTTPException:db.rollback();raise
  except Exception:
-  db.rollback(); raise
+  db.rollback();log.exception('Upload processing failed for %s',uid);raise
  finally:
   for p in (tmp,main_tmp,thumb_tmp):
    try:os.remove(p)
@@ -202,19 +220,18 @@ async def media(image_uuid:str,db:Session=Depends(get_db)):
  if not os.path.exists(p):raise HTTPException(404,'Media not found')
  r=FileResponse(p,media_type=img.mime_type);r.headers['Cache-Control']='public, max-age=31536000, immutable';return r
 @app.get('/i/{filename}')
-async def image_compat(filename:str,db:Session=Depends(get_db)):
- return await media(filename.split('.')[0],db)
+async def image_compat(filename:str,db:Session=Depends(get_db)):return await media(filename.split('.')[0],db)
 @app.get('/t/{filename}')
 async def thumb(filename:str,db:Session=Depends(get_db)):
  img=db.query(Image).filter(Image.uuid==filename.split('.')[0],Image.status=='approved').first()
  if not img or img.media_type!='image':raise HTTPException(404,'Thumbnail not found')
- p=os.path.join(PUBLIC_DIR,img.uuid+'.thumb.webp'); p=p if os.path.exists(p) else os.path.join(PUBLIC_DIR,img.uuid+'.webp')
+ p=os.path.join(PUBLIC_DIR,img.uuid+'.thumb.webp');p=p if os.path.exists(p) else os.path.join(PUBLIC_DIR,img.uuid+'.webp')
  return FileResponse(p,media_type='image/webp')
 
 @app.post('/vote/{image_uuid}')
 async def vote(req:Request,image_uuid:str,db:Session=Depends(get_db)):
  if not settings.get_bool('gallery.allow_voting',True):raise HTTPException(404,'Not found')
- form=await req.form();require_csrf(req,form.get('csrf_token')); val=form.get('value'); honeypot=form.get('website') or ''
+ form=await req.form();require_csrf(req,form.get('csrf_token'));val=form.get('value');honeypot=form.get('website') or ''
  if honeypot:raise HTTPException(400,'Invalid vote')
  if val not in ('1','-1'):raise HTTPException(400,'Invalid vote')
  if not vote_limit.allow('v:'+ip_key(req),20,600):raise HTTPException(429,'Too many votes. Please slow down.')
