@@ -4,7 +4,7 @@ APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR"
 
 echo "--- Media Gallery — Termux-only installer ---"
-echo "This project intentionally supports Termux on Android only."
+echo "Native Android/Termux runtime only. No Debian, proot, Docker, or Linux container is supported."
 echo
 
 if [ -z "${TERMUX_VERSION:-}" ] || [ "${PREFIX:-}" != "/data/data/com.termux/files/usr" ]; then
@@ -28,20 +28,47 @@ pkg_retry() {
 
 pkg update
 pkg upgrade -y
-pkg_retry python git curl coreutils openssl gnupg
+pkg_retry python python-pip python-pillow git curl coreutils openssl gnupg clang pkg-config
 
-if [ ! -d .venv ]; then
-  python3 -m venv .venv
+# TUR provides Android/Termux wheels for packages such as pydantic-core that
+# otherwise try to compile desktop Linux/Rust artifacts on the device.
+TUR_INDEX="https://termux-user-repository.github.io/pypi/"
+
+venv_needs_rebuild=0
+if [ ! -x .venv/bin/python ]; then
+  venv_needs_rebuild=1
+elif ! grep -q '^include-system-site-packages = true$' .venv/pyvenv.cfg 2>/dev/null; then
+  venv_needs_rebuild=1
+fi
+if [ "$venv_needs_rebuild" -eq 1 ]; then
+  if [ -d .venv ]; then
+    echo "Recreating the runtime environment as a Termux system-site-packages venv."
+    rm -rf .venv
+  fi
+  python3 -m venv --system-site-packages .venv
 fi
 . .venv/bin/activate
 
 python -m pip install --upgrade pip
-pkg install -y python-watchfiles 2>/dev/null || true
 
-if ! python -m pip install -r requirements.txt; then
-  echo "Normal dependency installation failed. Retrying with binary wheels only where available..."
-  python -m pip install --only-binary=:all: -r requirements.txt
-fi
+# Install the native Termux Pillow package into the system interpreter; the
+# venv above intentionally exposes Termux site-packages to avoid a fragile
+# Pillow source build on Android.
+python - <<'PY'
+import PIL
+print("Termux Pillow available:", PIL.__version__)
+PY
+
+# Install pydantic/core from TUR first. --only-binary prevents pip from
+# silently falling back to the Rust source distribution.
+python -m pip install --only-binary=pydantic-core --extra-index-url "$TUR_INDEX" pydantic==2.12.5 pydantic-core==2.41.5
+
+# Remaining packages are mostly pure Python; keep TUR available for any
+# Android-native dependency wheels it supplies.
+python -m pip install --extra-index-url "$TUR_INDEX" -r requirements.txt
+
+# Verify the complete application import before asking for credentials.
+PYTHONPATH="$APP_DIR" python -c 'import fastapi,uvicorn,sqlalchemy,PIL,pydantic; import backend.main; print("PRE-FLIGHT OK")'
 
 read -r -s -p "Admin password (10+ characters): " ADMIN_PASS; echo
 read -r -s -p "Confirm admin password: " ADMIN_CONFIRM; echo
@@ -56,7 +83,7 @@ chmod 600 .admin_pass_hash
 [ -f settings.json ] || cp settings.example.json settings.json
 
 python - <<'PY'
-import json, os, tempfile
+import json, os, tempfile, secrets
 p='settings.json'
 try:
     with open(p, encoding='utf-8') as f: d=json.load(f)
@@ -69,6 +96,10 @@ fd, tmp = tempfile.mkstemp(dir='.', prefix='settings.', suffix='.tmp')
 with os.fdopen(fd, 'w', encoding='utf-8') as f:
     json.dump(d, f, indent=2); f.write('\n'); f.flush(); os.fsync(f.fileno())
 os.chmod(tmp, 0o600); os.replace(tmp, p)
+secret_path='.secret_key'
+if not os.path.exists(secret_path):
+    with open(secret_path,'w',encoding='utf-8') as f: f.write(secrets.token_urlsafe(48)+'\n')
+os.chmod(secret_path,0o600)
 PY
 
 mkdir -p uploads/public uploads/quarantine uploads/staging models logs
