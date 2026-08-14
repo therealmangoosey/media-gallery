@@ -1,188 +1,203 @@
 # 🖼️ Media Gallery
 
-> Lightweight, privacy-first, self-hosted media sharing for small servers and old Android/Termux devices.
+> A lightweight, privacy-first, self-hosted media gallery built **specifically for Termux on Android**.
 
-[![Security](https://img.shields.io/badge/security-hardened-success)](#security) [![Termux](https://img.shields.io/badge/Android-Termux-blue)](#termux--android) [![Media](https://img.shields.io/badge/media-image--audio--video-purple)](#media-support)
+**Supported platform: Termux on Android.** This project is intentionally **not** a generic Linux, Windows, macOS, Docker, Raspberry Pi, Debian, or proot application.
+
+[![Platform](https://img.shields.io/badge/platform-Termux%20%2B%20Android-blue)](#requirements) [![Media](https://img.shields.io/badge/media-image%20%7C%20audio%20%7C%20video-purple)](#media-support) [![Security](https://img.shields.io/badge/security-hardened-success)](#security)
 
 ## Contents
 
-- [Overview](#overview)
+- [What this is](#what-this-is)
+- [What it runs on](#what-it-runs-on)
 - [Features](#features)
 - [Media support](#media-support)
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [Updating](#updating)
 - [First launch](#first-launch)
-- [Console control panel](#console-control-panel)
-- [Power modes](#power-modes)
-- [Accounts and sign-up](#accounts-and-sign-up)
-- [Voting and anti-bot protection](#voting-and-anti-bot-protection)
-- [Search and tags](#search-and-tags)
-- [Moderation](#moderation)
-- [Cloudflare Turnstile](#cloudflare-turnstile)
-- [Discord webhook](#discord-webhook)
+- [Connecting from devices](#connecting-from-devices)
 - [Cloudflare Tunnel](#cloudflare-tunnel)
-- [Storage isolation](#storage-isolation)
+- [Control panel](#control-panel)
+- [Configuration](#configuration)
+- [Power and performance](#power-and-performance)
+- [Accounts and voting](#accounts-and-voting)
+- [Moderation](#moderation)
+- [Discord](#discord)
+- [Storage](#storage)
 - [Security](#security)
-- [Termux & Android](#termux--android)
-- [Automatic recovery](#automatic-recovery)
 - [Backups](#backups)
+- [Updating](#updating)
 - [Troubleshooting](#troubleshooting)
-- [Configuration reference](#configuration-reference)
+- [Termux notes](#termux-notes)
 
-## Overview
+## What this is
 
-Media Gallery is designed to run locally and expose the gallery through a reverse proxy or Cloudflare Tunnel. The application binds to loopback by default, so it does not intentionally publish the device's LAN IP.
+Media Gallery turns an Android device running Termux into a small self-hosted media gallery. It can host images, audio and video, with accounts, uploads, search, tags, voting, moderation, Discord notifications and optional Cloudflare Tunnel access.
 
-The gallery supports community-style posts, voting, tags, search, moderation, accounts, Discord notifications, and common browser-playable image/audio/video formats while keeping the server lightweight.
+The application is designed around **native Termux Python and Android networking**. It does not require a Linux container or compatibility layer.
+
+## What it runs on
+
+### ✅ Supported
+
+- Android devices running current Termux
+- Termux's native Python environment
+- ARM/ARM64 Android devices and other architectures supported by Termux's Python packages
+- Local Wi-Fi/LAN access
+- Optional Cloudflare Tunnel for remote/public access
+
+### ❌ Not supported
+
+- Windows
+- macOS
+- ordinary desktop Linux
+- Docker/Podman
+- WSL
+- Debian/proot-distro
+- generic VPS/server installations
+- running the project outside Termux
+
+If you want a generic Linux server, this repository is deliberately the wrong project.
 
 ## Features
 
 - 🖼️ Images with metadata stripping and thumbnails
 - 🎵 Audio playback
 - 🎬 Video playback
-- ⬆️ Upload rate limiting
-- 👍 One vote per post per account/browser identity
-- 🛡️ Rate limiting + honeypot + optional Turnstile
-- 🔎 Search titles, descriptions and tags
-- 🏷️ Existing tag discovery
-- 🔥 New / Top / Most Active sorting
-- 👤 Optional accounts
-- 🚫 Sign-up can be disabled without deleting the login system
-- 🤖 Optional content moderation with fail-closed behaviour
+- ⬆️ Upload limits and rate limiting
+- 👍 Voting and anti-abuse protections
+- 🔎 Search, tags and sorting
+- 👤 Optional accounts and sign-up
+- 🛡️ Optional image moderation with fail-closed mode
 - 💬 Discord webhook notifications
 - ☁️ Cloudflare Tunnel support
-- 🔐 CSRF protection, secure cookies, security headers and password hashing
-- 📁 Storage restricted to the gallery's own directory
-- 📱 Termux/Android-friendly low-resource modes
-- ♻️ Automatic startup recovery
-- 🧰 Full console configuration, so normal operation does not require editing files
+- 🔐 CSRF protection, secure cookies, password hashing and security headers
+- 📁 Isolated gallery storage
+- 📱 Termux-friendly low-resource power modes
+- ♻️ Automatic native-Termux dependency recovery
+- 🧰 Numbered terminal control panel
+- 📡 Automatic connection information after startup
 
 ## Media support
 
-The default upload path accepts common browser-friendly formats.
+**Images:** JPEG, PNG and WebP. Images are re-encoded to WebP and metadata is stripped.
 
-**Images:** JPEG, PNG, WebP. Images are re-encoded to WebP and stripped of EXIF metadata.
+**Audio:** MP3, WAV, OGG, FLAC and M4A, subject to browser/device codec support.
 
-**Audio:** MP3, WAV, OGG, FLAC, M4A.
+**Video:** MP4, WebM, MOV, AVI and other browser-decodable formats.
 
-**Video:** MP4, WebM, MOV, AVI and other formats where the browser/device can decode them.
-
-Media is served with the detected MIME type. The application does not execute uploaded files.
+Uploaded files are treated as data. The application does not execute uploaded media.
 
 ## Requirements
 
-### Recommended for Termux
+You need:
 
-- Android with Termux from [F-Droid](https://f-droid.org/packages/com.termux/) or the official Termux project
-- Python 3
-- About 200–500 MB free storage for the application/dependencies
-- More free storage for uploaded media
+- An Android device
+- Current Termux from the official Termux distribution/F-Droid
+- Python 3 supplied by Termux
+- Git
+- curl
+- OpenSSL/GPG packages for the supported features
+- Free storage for the application, Python packages and your media
 
-### Old Android devices
-
-Start with **Eco** power mode. Native Termux Python is preferred. Debian/proot is available as a fallback when a dependency cannot run natively.
+For older Android hardware, Eco mode is recommended.
 
 ## Installation
 
 ### 1. Install Termux
 
-Use a current Termux build rather than an old Play Store build.
+Install a current Termux build. Do not use an obsolete Termux package.
 
 Official project: https://github.com/termux/termux-app
 
-### 2. Give Termux storage access
+### 2. Clone the project inside Termux
 
 ```bash
-termux-setup-storage
+git clone https://github.com/therealmangoosey/media-gallery.git
+cd media-gallery
 ```
 
-Media Gallery does **not** automatically scan the shared storage folders. Storage permission is only needed if you intentionally use Termux files for backups or deployment.
-
-### 3. Install basic packages
-
-```bash
-pkg update
-pkg upgrade
-pkg install python git curl openssl gnupg
-```
-
-### 4. Extract the project
-
-Put the project somewhere inside Termux, for example:
-
-```bash
-mkdir -p ~/media-gallery
-cd ~/media-gallery
-```
-
-Copy/extract the project there.
-
-### 5. Run the installer
+### 3. Run the installer
 
 ```bash
 bash install.sh
 ```
 
-The installer creates the Python environment, generates the local secret, asks for the admin password, and prepares the private media directories.
+The installer:
 
-### 6. Open the control panel
+1. Verifies that it is actually running inside Termux.
+2. Installs the required Termux packages.
+3. Creates the project's native Python `.venv`.
+4. Installs the Python dependencies.
+5. Creates the admin password hash.
+6. Creates private media directories.
+7. Creates a Termux-safe default configuration.
+8. Optionally installs the Cloudflare Tunnel binary when your Android CPU is supported.
+9. Runs the local security checks.
+
+**No proot, Debian container or other runtime is installed.**
+
+## First launch
+
+Start the control panel:
 
 ```bash
 bash scripts/menu.sh
 ```
 
-The first screen is the **interactive CLI control panel**. This is the numbered menu you were thinking of.
+Choose:
 
-## Updating
-
-Do **not** delete the folder and re-download, and do **not** run `install.sh` again. The installer asks for a new admin password and is only for first setup.
-
-From the gallery directory:
-
-```bash
-cd ~/media-gallery
-bash scripts/update.sh
+```text
+1) Start the gallery
 ```
 
-Or from the control panel: **Update application (keeps media & accounts)**.
+On a successful start the terminal prints connection information similar to:
 
-That command only refreshes application code (and Python packages listed in `requirements.txt`). It **does not** delete or overwrite:
-
-| Kept as-is | Why |
-|---|---|
-| `uploads/` (public, quarantine, staging) | All user media |
-| `gallery.db` | Accounts, posts, votes, tags |
-| `settings.json` | Site/console configuration |
-| `.env` | Webhook, Turnstile, tunnel secrets |
-| `.admin_pass_hash` / `.secret_key` | Admin login and session signing |
-| `.venv/` | Existing Python environment |
-| `logs/`, `models/`, `bin/` | Local logs, optional model, cloudflared |
-
-It never runs `git clean`, never wipes ignored files, and never resets the admin password.
-
-If you installed from a zip instead of git:
-
-```bash
-bash scripts/update.sh --from-zip /path/to/media-gallery.zip
+```text
+================ Connection Info ================
+This device: http://127.0.0.1:8000
+Other devices on this Wi-Fi/network: http://192.168.1.42:8000
+Cloudflare Tunnel: off
+==================================================
 ```
 
-The zip is overlaid on top of the existing tree with the same data folders excluded. Restart the gallery after a successful update.
+Your actual IP and port will be shown by the application.
 
-## First launch
+## Connecting from devices
 
-From the control panel choose:
+### This Android device
 
-1. **Start the gallery**
-2. **Open full configuration panel**
-3. **Power mode → Eco** if the device is old
-4. Configure Cloudflare Tunnel if you want a public URL
-5. Configure Discord if you want upload notifications
-6. Run the security test
+Use the **This device** address printed after startup, normally:
 
-The gallery deliberately does not display the loopback address in its own UI.
+```text
+http://127.0.0.1:PORT
+```
 
-## Console control panel
+### Another device on the same Wi-Fi/network
+
+Use the **Other devices on this Wi-Fi/network** address printed after startup:
+
+```text
+http://ANDROID-LAN-IP:PORT
+```
+
+The other device must be able to reach the Android device on the same network. Some guest Wi-Fi networks intentionally block device-to-device traffic.
+
+### Remote/public access
+
+Use Cloudflare Tunnel instead of forwarding an Android port directly to the internet. When the tunnel is configured, the startup output reports its public URL/status.
+
+## Cloudflare Tunnel
+
+Cloudflare Tunnel is optional. It provides remote access without requiring you to expose an Android port directly through your router.
+
+Configure it from:
+
+**Control panel → Configure Cloudflare Tunnel**
+
+The tunnel token is kept in `.env` with restrictive permissions. The local gallery still handles authentication and authorization.
+
+## Control panel
 
 Run:
 
@@ -190,169 +205,99 @@ Run:
 bash scripts/menu.sh
 ```
 
-The menu provides:
+The numbered console provides:
 
 | Option | Purpose |
 |---|---|
-| Start | Start the gallery and recover from common startup failures |
-| Stop | Stop the gallery and tunnel |
-| Restart | Restart the service |
-| Status | Check whether it is healthy without printing an IP address |
-| Logs | View recent application logs |
-| Backup | Create an encrypted backup |
-| Restore | Restore a backup after path validation |
-| Configuration | Change all supported settings |
-| Discord | Configure webhook |
-| Cloudflare Tunnel | Configure tunnel token |
-| Security test | Run local security checks |
-| Update | Refresh app code without touching media or accounts |
+| 1 | Start gallery |
+| 2 | Stop gallery |
+| 3 | Restart gallery |
+| 4 | Status |
+| 5 | Logs |
+| 6 | Encrypted backup |
+| 7 | Restore backup |
+| 8 | Full configuration |
+| 9 | Discord webhook |
+| 10 | Cloudflare Tunnel |
+| 11 | Security test |
+| 12 | Update application |
+| 0 | Exit |
 
-## Power modes
+Normal operation should not require manually editing JSON or shell scripts.
 
-The **Power Mode** tool is designed for old Android hardware.
+## Configuration
+
+The main configuration is `settings.json` and should normally be changed through the control panel.
+
+Important groups include:
+
+- Site/appearance
+- Server host and port
+- Storage paths
+- Upload limits
+- Gallery/search/tags/voting
+- Moderation
+- Accounts
+- Turnstile
+- Discord
+- Security
+- Runtime/power mode
+
+### Server address
+
+The default server host is `0.0.0.0` so another device on the same LAN can reach the gallery. The startup screen tells you the exact LAN URL.
+
+If you only want the gallery on the Android device, configure the server host as `127.0.0.1`.
+
+### Port
+
+Choose any available unprivileged port from 1024–65535. For example:
+
+```text
+8000
+49152
+8080
+```
+
+After changing it, restart the gallery.
+
+## Power and performance
 
 ### Eco
 
-- Smaller gallery pages
-- Smaller upload limit
-- Moderation disabled by default
-- Search/voting retained
-- Lowest CPU/RAM use
+Best for older Android devices. Uses smaller pages and conservative limits.
 
 ### Balanced
 
-- Normal gallery size
-- Moderation enabled
-- Voting/search enabled
-- Good default for most devices
+Recommended default. Normal gallery features and reasonable resource use.
 
 ### Full
 
-- Larger pages and upload limits
-- All optional features enabled
-- More RAM/CPU use
+For stronger Android devices. Allows larger workloads and optional features at higher CPU/RAM cost.
 
-You can select a power mode and then manually fine-tune individual features.
+Android can still suspend or kill background Termux processes. No application can guarantee that Android will keep a background process alive forever.
 
-## Accounts and sign-up
+## Accounts and voting
 
-Accounts are controlled separately from sign-up.
+Accounts and sign-up are independently configurable. Existing accounts are not deleted when sign-up is disabled.
 
-You can have:
-
-- Accounts + sign-up enabled
-- Accounts enabled + sign-up disabled
-- Accounts disabled
-- Anonymous uploads enabled or disabled
-
-Disabling sign-up **does not delete existing users** and does not disable the login system.
-
-## Voting and anti-bot protection
-
-Posts can have Reddit-style:
-
-- Upvotes
-- Downvotes
-- Net score
-- One vote per account/browser identity
-
-Additional protections include:
-
-- Per-IP rate limiting
-- Signed anonymous vote identity cookies
-- Database uniqueness constraints
-- Hidden honeypot fields
-- Optional Cloudflare Turnstile
-- Duplicate-vote rejection
-
-No anti-bot system can make anonymous voting mathematically impossible to abuse. For higher-trust communities, enable Turnstile and require accounts for sensitive actions.
-
-## Search and tags
-
-The gallery can search:
-
-- Titles
-- Descriptions
-- Tags
-
-Posts can have multiple tags. Existing tags appear as clickable filters at the top of the gallery.
-
-Sort modes:
-
-- **Most recent**
-- **Most upvoted**
-- **Most active**
+Voting uses account/browser identity protections, database uniqueness and rate limiting. Anonymous voting is inherently harder to protect than authenticated voting, so enable accounts and Turnstile for higher-trust communities.
 
 ## Moderation
 
-Moderation is optional.
-
-When enabled, image uploads can be:
-
-- Automatically approved
-- Quarantined for admin review
-- Rejected
-
-If the moderation model fails and **fail closed** is enabled, the image is quarantined instead of being published.
+Optional image moderation can approve, quarantine or reject images. With fail-closed enabled, moderation failures quarantine content rather than automatically publishing it.
 
 Audio/video are not sent through the image moderation model.
 
-For a small/old Android device, Eco mode or disabled moderation is recommended unless you have a lightweight compatible moderation model.
+On older devices, disable moderation or use a lightweight compatible model if performance is poor.
 
-## Cloudflare Turnstile
+## Discord
 
-Turnstile adds an optional human-verification step.
+Configure a Discord webhook from the control panel. The webhook URL is stored as a secret and is not printed by the normal settings display.
 
-Configure it from:
+## Storage
 
-**Console → Configuration → Cloudflare Turnstile**
-
-Create a Turnstile widget at:
-
-https://dash.cloudflare.com/
-
-You need:
-
-- Site key
-- Secret key
-
-The site key is stored in `settings.json`; the secret key is stored in `.env` with restricted permissions.
-
-You can independently protect:
-
-- Sign-up
-- Uploads
-- Voting
-
-## Discord webhook
-
-Go to:
-
-**Console → Configure Discord webhook**
-
-Paste the Discord webhook URL. **No channel ID is required.** A Discord webhook already belongs to its channel.
-
-When an approved/newly published media item is available, the server sends a notification to that webhook.
-
-Webhook secrets are stored in `.env` and are never printed by the settings viewer.
-
-## Cloudflare Tunnel
-
-For public hosting, use a Cloudflare Tunnel instead of opening an Android port directly.
-
-Create/manage tunnels here:
-
-https://one.dash.cloudflare.com/
-
-Then configure the token through:
-
-**Console → Configure Cloudflare Tunnel**
-
-The application itself binds to loopback. The tunnel is the public-facing component.
-
-## Storage isolation
-
-The application only reads/writes its configured child directories:
+The gallery only uses its own storage directories:
 
 ```text
 uploads/
@@ -361,94 +306,69 @@ uploads/
 └── staging/
 ```
 
-It does not scan:
+It does not automatically scan Android's shared photo/download directories or other applications' data.
 
-- `/sdcard/DCIM`
-- `/sdcard/Pictures`
-- `/sdcard/Download`
-- Other applications' folders
-
-Path traversal and absolute storage paths are rejected.
-
-This means you can have thousands of unrelated photos on the tablet without them appearing in the gallery.
+Path traversal and unsafe storage paths are rejected.
 
 ## Security
 
-Security controls include:
+The project includes:
 
-- Loopback-only application binding
-- No application access-log output by default
-- Server identity header suppression
-- Content Security Policy
-- `X-Content-Type-Options: nosniff`
-- `Referrer-Policy: no-referrer`
-- HSTS when HTTPS is detected
+- Restricted private media directories
+- Password hashing with Argon2
+- Signed sessions
 - Secure/HttpOnly/SameSite cookies
 - CSRF protection
-- Argon2 password hashing
-- Login/signup/upload/vote/report rate limiting
+- Rate limiting
 - Upload size limits
 - Image decompression-bomb protection
-- Image re-encoding
-- EXIF removal
-- Private media directories
-- Signed sessions
-- Session revocation on logout
-- Safe backup restore path checks
-- Discord URL validation
-- Turnstile verification
-- Fail-closed moderation option
+- Image re-encoding and metadata stripping
+- Path traversal protections
+- Security headers
+- Optional Turnstile
+- Fail-closed moderation
+- Safe backup path validation
+- Secret/config file permissions
+- Cloudflare Tunnel support
 
-Run the built-in audit with:
+Run:
 
 ```bash
 bash scripts/test_security.sh
 ```
 
-## Termux & Android
-
-The project is designed to prefer native Termux Python because proot adds overhead.
-
-If native dependencies cannot run, the console can use Debian/proot mode.
-
-For an old Samsung Tab A:
-
-1. Use **Eco** mode.
-2. Keep the gallery page size around 20–40.
-3. Avoid unnecessary image moderation.
-4. Keep video files reasonably sized.
-5. Disable features you do not need.
-6. Use Cloudflare Tunnel rather than exposing the device directly.
-7. Keep Android battery optimization disabled for Termux if you expect the server to stay running.
-
-Android itself may still kill background processes. The application cannot override Android's process-management rules.
-
-## Automatic recovery
-
-The startup manager can recover from common failures.
-
-If the configured local port is unavailable, it tries nearby ports and saves the working port when recovery is enabled.
-
-If the native virtual environment cannot start, it can fall back to another available Python runtime/proot path.
-
-If recovery still fails, the app does not silently pretend it is running. The console reports failure and points you to the local logs.
+A warning is not automatically a failure. Read each warning and correct it when it represents a configuration you actually need.
 
 ## Backups
 
-Backups contain only the gallery database, settings and configured gallery storage.
+Backups contain gallery data only. They do not sweep the Android device.
 
-They do **not** sweep the Android device for unrelated files.
-
-Backups can be encrypted with GPG:
+Use:
 
 ```bash
 bash scripts/menu.sh
-# choose Backup
 ```
+
+then choose **6 — Create encrypted backup**.
+
+## Updating
+
+For a Git checkout:
+
+```bash
+cd ~/media-gallery
+git pull --ff-only origin main
+```
+
+Then restart the gallery.
+
+You can also use **Update application** from the control panel.
+
+Do not delete `uploads/`, `gallery.db`, `.env`, `.admin_pass_hash`, `.secret_key` or `settings.json` when updating.
 
 ## Troubleshooting
 
-### Gallery will not start
+### Start fails
 
 Run:
 
@@ -456,63 +376,52 @@ Run:
 bash scripts/menu.sh
 ```
 
-Choose **Status**, then **Logs**.
+Choose **5 — View logs**.
 
-Try:
+The startup process performs a native Termux Python preflight before launching Uvicorn. Missing Python dependencies are automatically repaired from `requirements.txt` where possible.
+
+### Do not install proot to fix a startup error
+
+This project is intentionally Termux-only. If native Python fails, the correct recovery path is to repair the Termux environment:
 
 ```bash
-python3 -m py_compile backend/*.py
-bash -n scripts/manage.sh
-bash scripts/test_security.sh
+bash install.sh
 ```
 
-### Old Android / dependency problems
+If you need to preserve an existing deployment, back up your data first and use the application's update/recovery procedures rather than installing another runtime.
 
-Switch to:
-
-**Configuration → Runtime → Use Debian/proot mode → Yes**
-
-Then restart.
-
-### Uploads are quarantined
-
-If moderation is enabled, this is expected when the model is unavailable or errors. Either provide a compatible moderation model or disable moderation in the configuration panel.
-
-### Turnstile does not work
+### Other devices cannot connect
 
 Check:
 
-- Site key is correct
-- Secret key is correct
-- The hostname is registered in the Turnstile dashboard
-- Turnstile is enabled in the console
+1. Both devices are on the same Wi-Fi/network.
+2. The URL printed under **Other devices on this Wi-Fi/network** is correct.
+3. The network does not use client isolation/guest isolation.
+4. The Android device is not asleep or killing Termux.
+5. The configured port is available.
 
-### Discord does not receive notifications
+### Cloudflare does not connect
 
-Check the webhook in:
+Check the tunnel token, `bin/cloudflared`, the Cloudflare hostname and the tunnel log at `logs/tunnel.log`.
 
-**Configuration → Discord webhook**
+### Uploads fail
 
-Then restart the gallery. The webhook must be a Discord webhook URL and the webhook itself must still exist.
+Check the configured maximum upload size, allowed media types, storage permissions and moderation settings.
 
-## Configuration reference
+## Termux notes
 
-All normal configuration is available through the numbered console panel. The important groups are:
+- Keep the repository inside Termux's private home directory.
+- Do not put the application in `/sdcard` as its primary runtime directory.
+- Use `termux-setup-storage` only when you intentionally need shared-storage access.
+- Keep Termux exempt from Android battery optimization if the server needs to remain available.
+- Use a sensible page size on older devices.
+- Avoid huge simultaneous video uploads.
+- Keep regular encrypted backups.
 
-- Site / appearance
-- Server / storage
-- Upload limits
-- Gallery/search/tags/voting
-- Moderation
-- Accounts
-- Turnstile
-- Discord
-- Security
-- Runtime/recovery
-- Power mode
+## Project policy
 
-Manual editing of `settings.json` is intentionally unnecessary for normal use.
+This repository is intentionally maintained as a **Termux-on-Android project**. Cross-platform compatibility is not a goal. Keeping the runtime narrow lets the startup, networking, dependency and recovery code target the actual environment it is meant to run in.
 
-## License / project notes
+## License / deployment notes
 
-This project is intended for self-hosted/private deployments. Review your local laws, hosting provider rules, and the rules of any community where you publish user-generated content.
+This is self-hosting software for user-generated media. Follow applicable laws, hosting/network rules and community rules when deploying it.
