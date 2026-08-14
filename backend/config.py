@@ -30,9 +30,24 @@ def load_data():
    if isinstance(raw,dict): data=merge(data,raw)
    else: invalid=True
   else:
-   with open(SETTINGS_PATH,'w',encoding='utf-8') as f: json.dump(data,f,indent=2,ensure_ascii=False); f.write('\n')
- except (OSError,json.JSONDecodeError): invalid=True
- data['_invalid']=invalid; return data
+   _write_defaults(data)
+ except (OSError,json.JSONDecodeError,TypeError):
+  invalid=True
+  # Keep the application bootable even if settings.json was partially written
+  # or manually corrupted. Do not overwrite the user's file during import.
+ data['_invalid']=invalid
+ return data
+
+def _write_defaults(data):
+ try:
+  import tempfile
+  fd,tmp=tempfile.mkstemp(dir=BASE_DIR,prefix='settings.',suffix='.tmp')
+  with os.fdopen(fd,'w',encoding='utf-8') as f:
+   json.dump(data,f,indent=2,ensure_ascii=False); f.write('\n'); f.flush(); os.fsync(f.fileno())
+  os.chmod(tmp,0o600); os.replace(tmp,SETTINGS_PATH)
+ except OSError:
+  try: os.unlink(tmp)
+  except Exception: pass
 
 class Settings:
  def __init__(self): self._data=load_data(); self.invalid=self._data.pop('_invalid',False)
