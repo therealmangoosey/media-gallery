@@ -2,7 +2,7 @@
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
-LOG_DIR="$APP_DIR/logs"; LOG_FILE="$LOG_DIR/app.log"; PID_FILE="$APP_DIR/app.pid"; ENV_FILE="$APP_DIR/.env"
+LOG_DIR="$APP_DIR/logs"; LOG_FILE="$LOG_DIR/app.log"; PID_FILE="$APP_DIR/app.pid"; TUNNEL_PID_FILE="$APP_DIR/tunnel.pid"; TUNNEL_LOG="$LOG_DIR/tunnel.log"; ENV_FILE="$APP_DIR/.env"
 mkdir -p "$LOG_DIR"; touch "$LOG_FILE" 2>/dev/null || { echo "ERROR: cannot create $LOG_FILE"; exit 1; }; chmod 600 "$LOG_FILE" 2>/dev/null || true
 log(){ printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$*" | tee -a "$LOG_FILE"; }
 fail(){ log "STARTUP ERROR: $*"; return 1; }
@@ -40,8 +40,6 @@ install_native_deps(){
   log "Installing Android-compatible Python dependencies from PyPI/TUR."
   (cd "$APP_DIR" && "$py" -m pip install --only-binary=pydantic-core --extra-index-url "$tur" pydantic==2.12.5 pydantic-core==2.41.5 >>"$LOG_FILE" 2>&1) || return 1
   (cd "$APP_DIR" && "$py" -m pip install --extra-index-url "$tur" -r requirements.txt >>"$LOG_FILE" 2>&1) || return 1
-  # If this venv predates the Termux-only installer, it may not expose the
-  # native Pillow package. Rebuild it with system-site-packages in that case.
   if ! (PYTHONPATH="$APP_DIR" "$py" -c 'import PIL' >/dev/null 2>&1); then
     log "Native Pillow is not visible to this environment; recreate the venv with Termux system packages."
     return 1
@@ -49,6 +47,26 @@ install_native_deps(){
 }
 native_preflight(){ local py="$1"; (cd "$APP_DIR" && PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$py" -c 'import fastapi,uvicorn,sqlalchemy,PIL,pydantic; import backend.main; print("PRE-FLIGHT OK", flush=True)'); }
 start_native(){ local py="$1" p="$2"; [ -x "$py" ] || return 1; log "Testing Termux Python: $py"; if ! native_preflight "$py" >>"$LOG_FILE" 2>&1; then log "Termux dependencies/import are unavailable; attempting automatic repair."; install_native_deps "$py" || return 1; native_preflight "$py" >>"$LOG_FILE" 2>&1 || return 1; fi; log "Termux preflight passed. Starting Uvicorn on $listen_host:$p"; rm -f "$PID_FILE"; (cd "$APP_DIR" && nohup env PYTHONPATH="$APP_DIR${PYTHONPATH:+:$PYTHONPATH}" "$py" -m uvicorn backend.main:app --host "$listen_host" --port "$p" --no-access-log --no-server-header --log-level info >>"$LOG_FILE" 2>&1 & echo $! >"$PID_FILE"); }
+start_tunnel(){
+  [ -n "${TUNNEL_TOKEN:-}" ] || return 0
+  local cf="$APP_DIR/bin/cloudflared" tpid
+  if [ ! -x "$cf" ]; then log "Cloudflare Tunnel enabled but cloudflared is not installed."; return 1; fi
+  if [ -f "$TUNNEL_PID_FILE" ]; then
+    tpid="$(cat "$TUNNEL_PID_FILE" 2>/dev/null || true)"
+    if [[ "$tpid" =~ ^[0-9]+$ ]] && kill -0 "$tpid" 2>/dev/null; then log "Cloudflare Tunnel process already running (PID $tpid)."; return 0; fi
+    rm -f "$TUNNEL_PID_FILE"
+  fi
+  touch "$TUNNEL_LOG"; chmod 600 "$TUNNEL_LOG" 2>/dev/null || true
+  log "Starting Cloudflare Tunnel connector."
+  nohup "$cf" tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" >>"$TUNNEL_LOG" 2>&1 &
+  tpid=$!; echo "$tpid" >"$TUNNEL_PID_FILE"
+  sleep 2
+  if ! kill -0 "$tpid" 2>/dev/null; then
+    log "Cloudflare Tunnel exited immediately. Check logs/tunnel.log."; rm -f "$TUNNEL_PID_FILE"; return 1
+  fi
+  log "Cloudflare Tunnel process is running (PID $tpid). Waiting for connector registration."
+  return 0
+}
 : > "$LOG_FILE"; log "===== startup attempt ====="; log "Termux-only runtime | host: $listen_host | port: $port | auto_recover=$auto_recover"
 started=0
 if [ -x "$APP_DIR/.venv/bin/python" ]; then start_native "$APP_DIR/.venv/bin/python" "$port" && started=1; fi
@@ -58,6 +76,5 @@ healthy=0
 for _ in $(seq 1 20); do if health "$port"; then healthy=1; pid="$(cat "$PID_FILE" 2>/dev/null || true)"; log "Gallery is healthy on http://127.0.0.1:$port (PID ${pid:-unknown})."; break; fi; sleep 1; done
 if [ "$healthy" -ne 1 ]; then fail "Termux process did not become healthy on port $port."; tail -n 100 "$LOG_FILE" | sed 's/^/[startup] /'; pid="$(cat "$PID_FILE" 2>/dev/null || true)"; [[ "$pid" =~ ^[0-9]+$ ]] && kill "$pid" 2>/dev/null || true; rm -f "$PID_FILE"; exit 1; fi
 get_ip(){ ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}'; }
-ip="$(get_ip || true)"; echo ""; echo "================ Connection Info ================"; echo "This device: http://127.0.0.1:$port"; if [ -n "$ip" ]; then echo "Other devices on this Wi-Fi/network: http://$ip:$port"; else echo "Other devices on this Wi-Fi/network: http://<tablet-LAN-IP>:$port"; fi; if [ -n "${TUNNEL_URL:-}" ]; then echo "Cloudflare Tunnel: $TUNNEL_URL"; elif [ -n "${TUNNEL_TOKEN:-}" ]; then echo "Cloudflare Tunnel: enabled"; else echo "Cloudflare Tunnel: off"; fi; echo "=================================================="
-if [ -n "${TUNNEL_TOKEN:-}" ] && [ -x "$APP_DIR/bin/cloudflared" ]; then nohup "$APP_DIR/bin/cloudflared" tunnel --token "$TUNNEL_TOKEN" run >> "$APP_DIR/logs/tunnel.log" 2>&1 & echo $! > "$APP_DIR/tunnel.pid"; fi
+ip="$(get_ip || true)"; start_tunnel || true; echo ""; echo "================ Connection Info ================"; echo "This device: http://127.0.0.1:$port"; if [ -n "$ip" ]; then echo "Other devices on this Wi-Fi/network: http://$ip:$port"; else echo "Other devices on this Wi-Fi/network: http://<tablet-LAN-IP>:$port"; fi; if [ -n "${TUNNEL_URL:-}" ] && [ -f "$TUNNEL_PID_FILE" ]; then echo "Cloudflare Tunnel: $TUNNEL_URL (connector running)"; elif [ -n "${TUNNEL_TOKEN:-}" ]; then echo "Cloudflare Tunnel: enabled but connector is not running; see logs/tunnel.log"; else echo "Cloudflare Tunnel: off"; fi; echo "=================================================="
 exit 0
