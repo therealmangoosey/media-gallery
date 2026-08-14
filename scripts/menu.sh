@@ -5,15 +5,12 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
-
-# Reuse the management functions (start, stop, status, logs, backup, restore…).
-# shellcheck disable=SC1091
 . "$SCRIPT_DIR/manage.sh"
 
 BANNER='#   # ##### ####  #####   #          ####   #   #     #     ##### ####  #   #
 ## ## #     #   #   #    # #        #      # #  #     #     #     #   #  # #
-# # # ####  #   #   #   #####       #  ## ##### #     #     ####  ####    #
-#   # #     #   #   #   #   #       #   # #   # #     #     #     #  #    #
+# # # ####  #   #   #   #####       #  ## ##### #     ####  ####    #
+#   # #     #   #   #   #   #       #   # #   # #     #     #  #    #
 #   # ##### ####  ##### #   #        #### #   # ##### ##### ##### #   #   #'
 
 if [ -t 1 ]; then
@@ -37,55 +34,38 @@ MENU_ITEMS=(
     "Run security test|do_sec_test"
     "Update application (keeps media & accounts)|do_update"
 )
-
 EXIT_CHOICE=0
 
 show_banner() {
     printf '%s\n' "${C_CYAN}${C_BOLD}${BANNER}${C_RESET}"
     printf '%s\n' "${C_DIM}Self-hosted, private-by-design media gallery${C_RESET}"
 }
-
 show_menu() {
-    echo ""
-    local i label
+    echo ""; local i label
     for i in "${!MENU_ITEMS[@]}"; do
         label="${MENU_ITEMS[$i]%%|*}"
         printf '  %s%2d%s) %s\n' "${C_GREEN}" "$((i + 1))" "${C_RESET}" "$label"
     done
-    printf '  %s%2d%s) %s\n' "${C_RED}" "$EXIT_CHOICE" "${C_RESET}" "Exit"
-    echo ""
+    printf '  %s%2d%s) %s\n' "${C_RED}" "$EXIT_CHOICE" "${C_RESET}" "Exit"; echo ""
 }
+pause() { if [ -t 0 ]; then read -rp "Press Enter to return to the menu..." _dummy || true; fi; }
+run_action() { local name="$1"; type "$name" >/dev/null 2>&1 || { echo "${C_RED}Error: action '$name' is unavailable.${C_RESET}"; return 1; }; "$name"; }
 
-pause() {
-    if [ -t 0 ]; then
-        read -rp "Press Enter to return to the menu..." _dummy || true
+do_start() {
+    if [ ! -f "$SCRIPT_DIR/start_gallery.sh" ]; then
+        echo "${C_RED}Startup runner is missing. Run the application update first.${C_RESET}"; return 1
     fi
+    bash "$SCRIPT_DIR/start_gallery.sh"
 }
-
-run_action() {
-    local name="$1"
-    if ! type "$name" >/dev/null 2>&1; then
-        echo "${C_RED}Error: action '$name' is unavailable.${C_RESET}"
-        return 1
-    fi
-    "$name"
-}
-
-do_start() { start; }
 do_stop() { stop; }
-do_restart() { stop; start; }
+do_restart() { stop; do_start; }
 do_status() { status; }
 do_logs() { logs; }
 do_backup() { backup; }
 do_restore() {
     local file=''
-    if [ -t 0 ]; then
-        read -rp "Path to backup file (.gpg): " file || return 1
-    fi
-    if [ -z "$file" ]; then
-        echo "No file provided."
-        return 1
-    fi
+    if [ -t 0 ]; then read -rp "Path to backup file (.gpg): " file || return 1; fi
+    [ -n "$file" ] || { echo "No file provided."; return 1; }
     restore "$file"
 }
 do_settings() { python3 "$SCRIPT_DIR/settings_cli.py"; }
@@ -96,47 +76,24 @@ do_update() { bash "$SCRIPT_DIR/update.sh"; }
 
 dispatch() {
     local choice="$1" index=$((choice - 1)) item fn
-    if [ "$index" -lt 0 ] || [ "$index" -ge "${#MENU_ITEMS[@]}" ]; then
-        return 1
-    fi
-    item="${MENU_ITEMS[$index]}"
-    fn="${item#*|}"
-    run_action "$fn"
+    [ "$index" -ge 0 ] && [ "$index" -lt "${#MENU_ITEMS[@]}" ] || return 1
+    item="${MENU_ITEMS[$index]}"; fn="${item#*|}"; run_action "$fn"
 }
 
 main() {
     local choice=''
     while true; do
-        show_banner
-        show_menu
-
-        if ! read -rp "Selection [0-${#MENU_ITEMS[@]}]: " choice; then
-            echo ""
-            break
-        fi
-
+        show_banner; show_menu
+        if ! read -rp "Selection [0-${#MENU_ITEMS[@]}]: " choice; then echo ""; break; fi
         if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
-            echo "${C_YELLOW}Invalid input: '$choice' is not a number.${C_RESET}"
-            pause
-            continue
+            echo "${C_YELLOW}Invalid input: '$choice' is not a number.${C_RESET}"; pause; continue
         fi
-
-        if [ "$choice" -eq "$EXIT_CHOICE" ]; then
-            echo "Goodbye!"
-            break
-        fi
-
+        if [ "$choice" -eq "$EXIT_CHOICE" ]; then echo "Goodbye!"; break; fi
         if [ "$choice" -gt "${#MENU_ITEMS[@]}" ]; then
-            echo "${C_YELLOW}Invalid selection: $choice is out of range (1-${#MENU_ITEMS[@]}).${C_RESET}"
-            pause
-            continue
+            echo "${C_YELLOW}Invalid selection: $choice is out of range (1-${#MENU_ITEMS[@]}).${C_RESET}"; pause; continue
         fi
-
-        if ! dispatch "$choice"; then
-            echo "${C_RED}Error: selection $choice failed.${C_RESET}"
-        fi
+        if ! dispatch "$choice"; then echo "${C_RED}Error: selection $choice failed.${C_RESET}"; fi
         pause
     done
 }
-
 main "$@"
